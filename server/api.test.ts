@@ -1,0 +1,51 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { Store } from './store.ts';
+import { createApp } from './app.ts';
+import type { AddressInfo } from 'node:net';
+import { randomUUID } from 'node:crypto';
+import { units } from './domain.ts';
+import {setAccessCode} from './workspace.ts';
+
+test('API isolates identities, owner controls, and cross-origin writes', async () => {
+  const store = new Store(':memory:'); setAccessCode(store,'maya','demo-test-code');setAccessCode(store,'owner','owner-test-code'); const server = createApp(store).listen(0, '127.0.0.1');
+  await new Promise<void>(r => server.on('listening', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+  const headers = { 'content-type': 'application/json', 'x-allowance-client': 'local-prototype' };
+  try {
+    assert.equal((await fetch(base + '/bootstrap')).status, 401);
+    const login = await fetch(base + '/session', { method: 'POST', headers, body: JSON.stringify({ personId: 'maya', code:'demo-test-code' }) });
+    const cookie = login.headers.get('set-cookie')!.split(';')[0]; const memberHeaders = { ...headers, cookie };
+    const bootstrap = await (await fetch(base + '/bootstrap', { headers: memberHeaders })).json();
+    assert.equal(bootstrap.person.id, 'maya'); assert.ok(bootstrap.requests.every((r: any) => r.requesterId === 'maya')); assert.ok(bootstrap.tasks.every((t: any) => t.assigneeId === 'maya'));
+    assert.equal((await fetch(base + '/requests/REQ-1043/cancel', { method: 'POST', headers: memberHeaders })).status, 404);
+    assert.equal((await fetch(base + '/requests/REQ-1044/decision', { method: 'POST', headers: memberHeaders, body: JSON.stringify({ action: 'approve', note: 'Attempt' }) })).status, 403);
+    assert.equal((await fetch(base + '/policy', { method: 'PUT', headers: memberHeaders, body: '{}' })).status, 403);
+    assert.equal((await fetch(base + '/session', { method: 'POST', headers: { ...headers, origin: 'https://untrusted.example' }, body: JSON.stringify({ personId: 'owner', code:'owner-test-code' }) })).status, 403);
+    assert.equal((await fetch(base + '/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ personId: 'owner', code:'owner-test-code' }) })).status, 403);
+    const badAssignment = await fetch(base + '/requests', { method: 'POST', headers: memberHeaders, body: JSON.stringify({ title: 'Task mismatch', taskId: 'edit', supplierId: 'framekit', category: 'Creative assets', amount: '20', purpose: 'A purchase request for someone else’s assignment.', evidenceUrl: 'https://framekit.example/quote', idempotencyKey: 'test-assignment-unique' }) });
+    assert.equal(badAssignment.status, 403);
+    const fakeEvidence = await fetch(base + '/requests', { method: 'POST', headers: memberHeaders, body: JSON.stringify({ title: 'Font purchase', taskId: 'identity', supplierId: 'typefoundry', category: 'Creative assets', amount: '20', purpose: 'A commercial font for the assigned brand identity.', evidenceUrl: '', evidenceId: 'another-members-evidence', idempotencyKey: 'test-evidence-unique' }) });
+    assert.equal(fakeEvidence.status, 400);
+    const spoofFile = await fetch(base + '/evidence', { method: 'POST', headers: memberHeaders, body: JSON.stringify({ name: 'quote.png', mime: 'image/png', data: Buffer.from('<script>not an image</script>').toString('base64') }) });
+    assert.equal(spoofFile.status, 400);
+    assert.equal((await fetch(base + '/evidence/unknown', { headers: memberHeaders })).status, 404);
+    assert.equal((await fetch(base + '/setup/people', { method: 'POST', headers: memberHeaders, body: JSON.stringify({ name: 'Test Member', title: 'Designer' }) })).status, 403);
+    const ownerLogin = await fetch(base + '/session', { method: 'POST', headers, body: JSON.stringify({ personId: 'owner', code:'owner-test-code' }) });
+    const ownerHeaders = { ...headers, cookie: ownerLogin.headers.get('set-cookie')!.split(';')[0] };
+    const createdMember = await fetch(base + '/setup/people', { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ name: 'Demo Researcher', title: 'Research contractor' }) });
+    assert.equal(createdMember.status, 201); const member = await createdMember.json(); assert.equal(member.role, 'member');
+    const createdProject = await fetch(base + '/setup/projects', { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ name: 'Demo research project', description: 'A synthetic project for access verification.', budget: '150' }) });
+    assert.equal(createdProject.status, 201); const project = await createdProject.json();
+    const createdTask = await fetch(base + '/setup/tasks', { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ title: 'Prepare the research brief', description: 'Gather sources for the synthetic project.', projectId: project.id, assigneeId: member.id }) });
+    assert.equal(createdTask.status, 201);
+    const badTask = await fetch(base + '/setup/tasks', { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ title: 'Invalid task assignment', description: 'This task must not be created for an absent person.', projectId: project.id, assigneeId: 'missing' }) });
+    assert.equal(badTask.status, 400);
+    const policy = store.policy(); policy.projectLimit = units('65'); store.put('policy', 'main', policy);
+    const competing = [randomUUID(), randomUUID()].map(id => ({ ...store.request('REQ-1044')!, id, idempotencyKey: randomUUID(), amount: units('30') }));
+    competing.forEach(r => store.create(r));
+    const results = await Promise.all(competing.map(r => fetch(base + `/requests/${r.id}/decision`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ action: 'approve', note: 'Synthetic concurrent budget verification.' }) })));
+    assert.deepEqual(results.map(r => r.status).sort(), [200, 400]);
+    assert.equal(store.committed('launch'), units('58'));
+  } finally { await new Promise<void>(r => server.close(() => r())); store.close(); }
+});

@@ -1,0 +1,13 @@
+@media (max-width:760px) {
+  .stat-row { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .stat-row>div { min-width:0; align-items:flex-start; gap:5px; padding:0 10px; }
+  .stat-row .stat-icon { display:none; }
+  .stat-row small { white-space:normal; display:block; font-size:9px; line-height:1.6; }
+  .table-head,.request-row { grid-template-columns:minmax(0,1fr) 45px 94px; gap:7px; }
+  .request-name small { max-width:100%; }
+  .request-name,.overview-band,.budget-track,.main-content,.page-heading>div { min-width:0; }
+}
+
+.skip-link{position:fixed;left:15px;top:15px;z-index:200;padding:12px 18px;background:#082126;color:#f2faf6;border-radius:6px;transform:translateY(-200%);font-size:13px}.skip-link:focus{transform:translateY(0)}
+.modal,.detail-scroll,.chat-messages{overscroll-behavior:contain}button,a{touch-action:manipulation}h1,h2,h3{text-wrap:balance}.input-unit:focus-within,.chat-composer:focus-within{outline:2px solid #2f6fed;outline-offset:2px}.table-amount,.detail-amount,.project-budget,.spend-total{font-variant-numeric:tabular-nums}#main{scroll-margin-top:20px}
+@media(max-width:760px){.detail-actions{padding-bottom:max(16px,env(safe-area-inset-bottom))}.tabs button{min-height:36px}.icon-btn{min-height:44px;min-width:44px}}

@@ -1,0 +1,38 @@
+{
+  "name": "allowance-local-prototype",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server/index.ts",
+    "build": "tsc --noEmit && vite build",
+    "start": "tsx server/index.ts --production",
+    "test": "node --import tsx --test server/*.test.ts",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@carts1024/velo-sdk": "0.1.0-alpha.4",
+    "@fontsource-variable/manrope": "latest",
+    "@noirx402/agent-sdk": "0.3.0",
+    "@stellar/freighter-api": "^6.0.1",
+    "@stellar/stellar-sdk": "latest",
+    "express": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/express": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "tsx": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

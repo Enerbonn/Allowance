@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.local/
+.env
+.env.*
+*.log
+*.sqlite*
+*.dpapi
+*.bin
+*.pem
+*.key
+/scripts/setup-n8n.mjs
