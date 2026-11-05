@@ -49,3 +49,84 @@ test('API isolates identities, owner controls, and cross-origin writes', async (
     assert.equal(store.committed('launch'), units('58'));
   } finally { await new Promise<void>(r => server.close(() => r())); store.close(); }
 });
+
+test('Gemini powers the connection check, scoped assistant and purchase review', async t => {
+  const key = process.env.GEMINI_API_KEY;
+  const model = process.env.GEMINI_MODEL;
+  process.env.GEMINI_API_KEY = 'synthetic-test-key';
+  delete process.env.GEMINI_MODEL;
+  const store = new Store(':memory:');
+  setAccessCode(store, 'owner', 'owner-test-code');
+  setAccessCode(store, 'maya', 'member-test-code');
+  const localFetch = globalThis.fetch;
+  let rateLimited = false;
+  const providerCalls = t.mock.method(globalThis, 'fetch', async (url: Parameters<typeof fetch>[0], options?: RequestInit) => {
+    if (String(url).startsWith('http://127.0.0.1:')) return localFetch(url, options);
+    assert.equal(String(url), 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent');
+    assert.equal(new Headers(options?.headers).get('x-goog-api-key'), 'synthetic-test-key');
+    if (rateLimited) return new Response(null, { status: 429 });
+    const payload = JSON.parse(String(options?.body));
+    const context = JSON.parse(payload.contents[0].parts[0].text);
+    assert.equal(payload.generationConfig.responseMimeType, 'application/json');
+    assert.ok(!JSON.stringify(payload).includes('member-test-code'));
+    let result;
+    if (context.connectionTest) {
+      result = { summary: 'Connected' };
+    } else if (context.mode === 'workspace') {
+      assert.equal(context.authenticatedPerson.id, 'maya');
+      assert.ok(context.tasks.every((task: { assigneeId: string }) => task.assigneeId === 'maya'));
+      assert.match(payload.systemInstruction.parts[0].text, /Spending assistant/);
+      result = { reply: 'Here is a summary of your assigned work.', draft: null, proposals: [] };
+    } else {
+      assert.ok(context.request.title);
+      result = { recommendation: 'review', summary: 'Owner review needed.', reasoning: [], missingInformation: [] };
+    }
+    return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }] });
+  });
+  const server = createApp(store).listen(0, '127.0.0.1');
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+    const headers = { 'content-type': 'application/json', 'x-allowance-client': 'local-prototype' };
+    async function signIn(personId: string, code: string) {
+      const response = await localFetch(base + '/session', { method: 'POST', headers, body: JSON.stringify({ personId, code }) });
+      assert.equal(response.status, 200);
+      return { ...headers, cookie: response.headers.get('set-cookie')!.split(';')[0] };
+    }
+    const ownerHeaders = await signIn('owner', 'owner-test-code');
+    const memberHeaders = await signIn('maya', 'member-test-code');
+    const check = await localFetch(base + '/ai/test', { method: 'POST', headers: ownerHeaders });
+    assert.equal(check.status, 200);
+    const state = await check.json();
+    assert.equal(state.provider, 'Google Gemini');
+    assert.equal(state.model, 'gemini-3.1-flash-lite');
+    assert.ok(!JSON.stringify(state).includes('synthetic-test-key'));
+
+    const chat = await localFetch(base + '/assistant', { method: 'POST', headers: memberHeaders, body: JSON.stringify({ message: 'What am I working on?' }) });
+    assert.equal(chat.status, 200);
+    assert.match((await chat.json()).text, /assigned work/);
+
+    const review = await localFetch(base + '/requests/REQ-1044/review', { method: 'POST', headers: ownerHeaders });
+    assert.equal(review.status, 200);
+    assert.equal(store.request('REQ-1044')?.ai?.provider, 'Google Gemini');
+
+    rateLimited = true;
+    const fallback = await localFetch(base + '/requests/REQ-1044/review', { method: 'POST', headers: ownerHeaders });
+    assert.equal(fallback.status, 200);
+    assert.equal(store.request('REQ-1044')?.ai?.provider, 'Owner review required');
+    const quota = await localFetch(base + '/ai/test', { method: 'POST', headers: ownerHeaders });
+    assert.equal(quota.status, 503);
+    assert.match((await quota.json()).error, /Gemini quota/);
+    assert.equal(providerCalls.mock.callCount(), 5);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    store.close();
+    if (key === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = key;
+    if (model === undefined) delete process.env.GEMINI_MODEL;
+    else process.env.GEMINI_MODEL = model;
+  }
+});

@@ -24,7 +24,7 @@ export function verifyAccessCode(store:Store,id:string,code:string) {
 export function publicMember(store:Store,p:Person) { return {...p,codeSet:!!store.get('credentials',p.id),spent:store.memberSpent(p.id),description:p.description||store.tasks().filter(t=>t.assigneeId===p.id).map(t=>t.description).join(' ')}; }
 const redact = (text:string) => text.replace(/\btg_test_[a-f0-9]{32}\b/gi,'[credential removed]').replace(/\b(?:code|password|passcode)\s*[:=]\s*\S+/gi,'[private code removed]');
 
-export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;owner:RequestHandler;callAI:(body:unknown)=>Promise<any>;connected:(model?:string)=>void}) {
+export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;owner:RequestHandler;callAI:(body:Record<string,unknown>)=>Promise<any>;connected:(model?:string)=>void;failed:(error:unknown)=>void}) {
   // One-time migration removes the old identity-only demo sessions.
   if (!store.setting('access-v2')) {store.db.prepare('DELETE FROM sessions').run();store.setSetting('access-v2','enabled');}
   const workspaceOwner=store.get<Person>('people','owner');if(workspaceOwner?.title==='Studio owner'){workspaceOwner.title='Workspace owner';store.put('people','owner',workspaceOwner);}
@@ -79,7 +79,7 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
         const stored={...proposal,id:randomUUID(),personId:p.id,state:'pending',policyVersion:store.policy().version,profileVersion:store.get<Person>('people',proposal.targetId)?.profileVersion||0};store.put('proposals',stored.id,stored);proposals.push(stored);
       }
       o.connected(answer.model);res.json(save('assistant',redact(answer.reply),{draft:answer.draft,proposals,model:answer.model}));
-    }catch{res.status(503).json(save('assistant','I couldn’t reach the AI service. Your message is saved. Check Connections and try again; profiles, rules and requests are still available manually.',{draft:null,error:'AI connection unavailable. Start the Relmio-connected n8n instance and check the account grant.'}));}
+    }catch(error){o.failed(error);res.status(503).json(save('assistant','I couldn’t reach the AI service. Your message is saved. Check Connections and try again; profiles, rules and requests are still available manually.',{draft:null,error:'AI connection unavailable. See Connections for details.'}));}
   });
   app.post('/api/proposals/:id/apply',o.auth,(req,res)=>{
     const v=store.get<any>('proposals',String(req.params.id));const p=res.locals.person as Person;

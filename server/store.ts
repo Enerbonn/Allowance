@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { money, policyChecks, SCALE, type Policy, type Person, type Project, type Task, type Supplier, type SpendRequest, type Event, type Review } from './domain.ts';
+import { GEMINI_PROVIDER, RELMIO_PROVIDER, money, policyChecks, SCALE, type Policy, type Person, type Project, type Task, type Supplier, type SpendRequest, type Event, type Review } from './domain.ts';
 
 export class Store {
   db: DatabaseSync;
@@ -53,7 +53,7 @@ export class Store {
     this.saveRequest(r); this.event('Review completed', ai.summary, ai.provider, r.id, 'review');
     const p = this.policy();
     if (r.policyVersion !== p.version || (r.profileVersion!==undefined && r.profileVersion!==(this.get<Person>('people',r.requesterId)?.profileVersion||0))) { r.status = 'needs_review'; r.reasons.push('Policy changed during the review. The owner must review the current rules.'); this.saveRequest(r); return r; }
-    if (r.mode === 'simulated' && r.status === 'needs_review' && ai.provider === 'Relmio via local n8n' && ai.recommendation === 'approve' && !ai.missingInformation.length && p.autoPay && r.amount <= p.autoLimit) return this.pay(id, 'Policy-approved assistant');
+    if (r.mode === 'simulated' && r.status === 'needs_review' && [RELMIO_PROVIDER, GEMINI_PROVIDER].includes(ai.provider) && ai.recommendation === 'approve' && !ai.missingInformation.length && p.autoPay && r.amount <= p.autoLimit) return this.pay(id, 'Policy-approved assistant');
     return r;
   }
   pay(id: string, actor: string) {

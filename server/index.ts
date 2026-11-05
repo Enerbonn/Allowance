@@ -1,7 +1,10 @@
+import { existsSync } from 'node:fs';
 import { Store } from './store.ts';
 import { createApp } from './app.ts';
 import { resolve } from 'node:path';
 import express from 'express';
+
+if (existsSync('.env.local')) process.loadEnvFile('.env.local');
 
 const store = new Store(process.env.ALLOWANCE_DB || '.local/allowance.sqlite');
 const app = createApp(store);

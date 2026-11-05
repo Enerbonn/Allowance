@@ -2,10 +2,11 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import { randomUUID } from 'node:crypto';
 import { Store } from './store.ts';
 import { categories, requestSchema, policySchema, units, offlineReview, validateReview, money, type Person, type Policy, type SpendRequest, type Task } from './domain.ts';
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { installWorkspace, publicMember } from './workspace.ts';
+import { createAiClient } from './ai.ts';
 import {installTestnet} from './testnet.ts';
 
 export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?: string } = {}) {
@@ -25,29 +26,26 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
   const auth = (req: Request, res: Response, next: NextFunction) => { const p = person(req); if (!p?.active) return res.status(401).json({ error: 'Sign in to continue.' }); res.locals.person = p; next(); };
   const owner = (_req: Request, res: Response, next: NextFunction) => res.locals.person.role === 'owner' ? next() : res.status(403).json({ error: 'Only the owner can do this.' });
   const visible = (res: Response, r: SpendRequest) => res.locals.person.role === 'owner' || r.requesterId === res.locals.person.id;
-  let aiState: { connected: boolean; lastChecked: string | null; model: string | null; message: string } = { connected: false, lastChecked: null, model: null, message: 'Connection has not been tested yet.' };
-  const endpoint = () => options.aiEndpoint || process.env.N8N_REVIEW_URL || 'http://127.0.0.1:5679/webhook/allowance-review-v1';
-  const aiToken = () => options.aiToken || process.env.ALLOWANCE_N8N_TOKEN || (existsSync('.local/n8n-token.bin') ? readFileSync('.local/n8n-token.bin', 'utf8').trim() : '');
+  const ai = createAiClient(options);
+  let aiState = { provider: ai.provider, connected: false, lastChecked: null as string | null, model: null as string | null, message: ai.message };
+  const aiConnected = (model?: string) => {
+    aiState = { ...aiState, connected: true, lastChecked: new Date().toISOString(), model: model || null, message: `Received a valid response through ${ai.provider}.` };
+  };
+  const aiFailed = (error: unknown) => {
+    aiState = { ...aiState, connected: false, lastChecked: new Date().toISOString(), model: null, message: ai.errorMessage(error) };
+  };
   async function review(r: SpendRequest) {
     try {
-      const response = await fetch(endpoint(), {
-        method: 'POST', headers: { 'content-type': 'application/json', 'x-allowance-token': aiToken() },
-        body: JSON.stringify({ request: { title: r.title, purpose: r.purpose, amount: money(r.amount), currency: 'XLM', category: r.category, requester: store.get('people',r.requesterId), evidenceSupplied: !!(r.evidenceUrl || r.evidenceId), attachment: r.evidenceId ? 'File retained for human review; contents not inspected by the AI.' : null }, task: store.get('tasks', r.taskId), supplier: store.suppliers().find(s => s.id === r.supplierId), policy: { description: store.policy().description, perRequest: money(store.policy().perRequest), autoLimit: money(store.policy().autoLimit) } }),
-        signal: AbortSignal.timeout(110000),
-      });
-      if (!response.ok) throw new Error(`n8n returned HTTP ${response.status}.`);
-      const raw = await response.json(); const result = validateReview(raw);
-      aiState = { connected: true, lastChecked: new Date().toISOString(), model: result.model || null, message: 'A real model review completed through local n8n and Relmio.' };
+      const raw = await ai.call({ request: { title: r.title, purpose: r.purpose, amount: money(r.amount), currency: 'XLM', category: r.category, requester: store.get('people',r.requesterId), evidenceSupplied: !!(r.evidenceUrl || r.evidenceId), attachment: r.evidenceId ? 'File retained for human review; contents not inspected by the AI.' : null }, task: store.get('tasks', r.taskId), supplier: store.suppliers().find(s => s.id === r.supplierId), policy: { description: store.policy().description, perRequest: money(store.policy().perRequest), autoLimit: money(store.policy().autoLimit) } });
+      const result = validateReview(raw, ai.provider ?? undefined);
+      aiConnected(result.model);
       store.setReview(r.id, result);
-    } catch (e) {
-      aiState = { connected: false, lastChecked: new Date().toISOString(), model: null, message: e instanceof Error && /HTTP/.test(e.message) ? e.message : 'AI connection unavailable. Check n8n and Relmio sign-in.' };
+    } catch (error) {
+      aiFailed(error);
       store.setReview(r.id, offlineReview());
     }
   }
-  installWorkspace(app, store, { auth, owner, callAI: async body => {
-    const response = await fetch(endpoint(), {method:'POST',headers:{'content-type':'application/json','x-allowance-token':aiToken()},body:JSON.stringify(body),signal:AbortSignal.timeout(110000)});
-    if(!response.ok) throw new Error('AI service unavailable.'); return response.json();
-  }, connected: model => {aiState={connected:true,lastChecked:new Date().toISOString(),model:model||null,message:'Real role-aware response completed through Relmio and n8n.'};} });
+  installWorkspace(app, store, { auth, owner, callAI: ai.call, connected: aiConnected, failed: aiFailed });
   installTestnet(app,store,auth,owner);
   app.get('/api/health', (_req, res) => res.json({ ok: true, app: 'Allowance', paymentMode: 'simulated' }));
   app.delete('/api/session', auth, (req, res) => { const p = req.headers.cookie?.match(/allowance_session=([^;]+)/)?.[1]; if (p) store.db.prepare('DELETE FROM sessions WHERE token=?').run(p); res.clearCookie('allowance_session'); res.json({ ok: true }); });
@@ -103,11 +101,14 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
   });
   app.post('/api/ai/test', auth, owner, async (_req, res) => {
     try {
-      const response = await fetch(endpoint(), { method: 'POST', headers: { 'content-type': 'application/json', 'x-allowance-token': aiToken() }, body: JSON.stringify({ connectionTest: true }), signal: AbortSignal.timeout(110000) });
-      if (!response.ok) throw new Error(`n8n returned HTTP ${response.status}.`);
-      const raw = await response.json(); if (!raw.summary) throw new Error('No model response returned.');
-      aiState = { connected: true, lastChecked: new Date().toISOString(), model: raw.model || null, message: raw.summary }; res.json(aiState);
-    } catch (e) { aiState = { connected: false, lastChecked: new Date().toISOString(), model: null, message: e instanceof Error && /HTTP/.test(e.message) ? e.message : 'Start local n8n and check the Relmio account grant.' }; res.status(503).json({ ...aiState, error: aiState.message }); }
+      const raw = await ai.call({ connectionTest: true });
+      const result = z.object({ summary: z.string().min(1).max(1200), model: z.string().max(120).optional() }).parse(raw);
+      aiConnected(result.model);
+      res.json(aiState);
+    } catch (error) {
+      aiFailed(error);
+      res.status(503).json({ ...aiState, error: aiState.message });
+    }
   });
   app.get('/api/export', auth, owner, (_req, res) => { res.setHeader('content-type', 'text/csv; charset=utf-8'); res.setHeader('content-disposition', 'attachment; filename="allowance-expenses.csv"'); const esc = (v: unknown) => '"' + String(v ?? '').replace(/^[=+@-]/, "'$&").replaceAll('"', '""') + '"'; res.send([['Request', 'Title', 'Person', 'Project', 'Amount XLM', 'Status', 'Mode', 'Receipt', 'Created'], ...store.requests().map(r => [r.id, r.title, store.get<Person>('people', r.requesterId)?.name, r.projectId, money(r.amount), r.status, r.mode, r.receipt, r.createdAt])].map(row => row.map(esc).join(',')).join('\r\n')); });
   app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found.' }));

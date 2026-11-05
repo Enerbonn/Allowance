@@ -6,18 +6,26 @@ An owner sets a budget, assigns work and defines which expenses are eligible. A 
 
 ## Run on your laptop
 
-Install Git and **Node.js 24.22.1**. This is the tested Node version for the locked dependencies. Check with `node -v`.
+Ask the repository owner for access to this private repo. Install [Git](https://git-scm.com/downloads) and [Node.js 24.22.1](https://nodejs.org/en/download), the tested Node version. Run these commands in a terminal:
 
 ```powershell
 git clone https://github.com/Enerbonn/Allowance.git
 cd Allowance
 npm ci
-npm test
 npm run build
 npm start
 ```
 
-Open [Allowance on port 4310](http://127.0.0.1:4310/). On Windows, after the first build you can double-click [START.cmd](START.cmd) instead of running `npm start`. Use it again after a reboot. Run `npm run dev` while editing source. The launcher starts the app. Start Docker and your n8n/Relmio containers separately when you want AI.
+Open [Allowance on port 4310](http://127.0.0.1:4310/). On Windows, after the first build you can double-click [START.cmd](START.cmd) instead of running `npm start`. Use it again after a reboot. Run `npm run dev` while editing source. To check your installation, run `npm test`.
+
+### Choose how to try it
+
+| I want to… | What I need |
+| --- | --- |
+| Try the owner and member workflow | **Start here.** Run the commands above, then follow the demo below. No API key, Docker, or wallet needed. |
+| Chat with the assistant | Create a Gemini API key, add it to `.env.local`, restart and test the connection. [Gemini quick setup](docs/AI-SETUP.md#option-1-use-gemini-directly) |
+| Reproduce the original ChatGPT workflow | Use your own n8n instance and Relmio connection. [Relmio and n8n setup](docs/AI-SETUP.md#option-2-use-chatgpt-through-relmio-and-n8n) |
+| Connect a wallet and try Stellar Testnet | Create and fund a test wallet, register a Velo project and connect it in Allowance. [Wallet and Testnet tutorial](docs/HACKATHON.md#wallet-and-testnet-tutorial-on-windows) |
 
 ### Try both roles
 
@@ -36,7 +44,7 @@ Member budgets are lifetime totals across projects. Zero blocks spending while k
 | Server | Node.js, Express, TypeScript, Zod | [server/index.ts](server/index.ts), [server/app.ts](server/app.ts) |
 | Access and AI context | scrypt, server sessions, Markdown instructions | [server/workspace.ts](server/workspace.ts), [server/agent-instructions.md](server/agent-instructions.md) |
 | Persistence and checks | SQLite, SQL, integer XLM amounts | [server/store.ts](server/store.ts), [server/domain.ts](server/domain.ts) |
-| AI | Docker, n8n, Relmio, ChatGPT | [Importable n8n workflow](n8n/allowance-review.json), [AI setup guide](docs/AI-SETUP.md) |
+| AI | Gemini API directly, or ChatGPT through n8n and Relmio | [Importable n8n workflow](n8n/allowance-review.json), [AI setup guide](docs/AI-SETUP.md) |
 | Testnet | Freighter-compatible wallet API, Stellar SDK, Noir Agent SDK, Velo SDK | [src/Testnet.tsx](src/Testnet.tsx), [server/testnet.ts](server/testnet.ts) |
 
 ```mermaid
@@ -44,7 +52,8 @@ flowchart TD
     U[Owner or team member] --> B[React UI]
     B --> A[Express API verifies identity and permissions]
     A <--> S[(Local SQLite)]
-    A --> N[n8n webhook]
+    A <-->|Optional AI| G[Gemini API]
+    A -->|Optional original workflow| N[n8n webhook]
     N --> R[Private Relmio gateway]
     R --> M[ChatGPT inference]
     M -. structured reply .-> R
@@ -64,12 +73,14 @@ Before spending, the backend checks membership, assignment, supplier, category, 
 
 ## AI credentials and APIs
 
-An API is how services communicate. Our app calls an **n8n webhook**, n8n calls **Relmio’s local OpenAI-compatible API**, and Relmio uses the account holder’s authorized ChatGPT connection for inference. Follow the linked setup guide and create your own n8n credential with Relmio’s local bearer. The Relmio route uses that bearer instead of a separate OpenAI Platform API key. [Official Relmio local setup](https://relmio.jpfusin.tech/docs/getting-started) · [Setup for this repository](docs/AI-SETUP.md)
+An API lets the backend send a request to an AI service and receive a structured response. Gemini uses your own Google AI Studio API key. The original route sends a webhook to n8n, which calls Relmio’s local API using a bearer from the Relmio setup. Relmio connects to your authorized ChatGPT account. [AI setup guide](docs/AI-SETUP.md) · [Relmio on GitHub](https://github.com/Demonbane18/relmio)
 
 The project uses these configuration names. Each machine supplies its own values.
 
 | Name | Purpose |
 | --- | --- |
+| `GEMINI_API_KEY` | Your Google AI Studio key. Setting it selects Gemini at startup |
+| `GEMINI_MODEL` | Optional model override. Defaults to `gemini-3.1-flash-lite` |
 | `N8N_REVIEW_URL` | n8n production webhook URL. Defaults to `http://127.0.0.1:5679/webhook/allowance-review-v1` |
 | `ALLOWANCE_N8N_TOKEN` | Shared header token for the app-to-n8n webhook. The app can also read its local token file |
 | `RELMIO_BEARER` | Documentation label for your own bearer entered into the n8n OpenAI credential |

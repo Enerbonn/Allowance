@@ -51,7 +51,10 @@ export function offlineReview(): Review {
   return { recommendation: 'review', summary: 'AI review is unavailable. Your request is saved for the owner.', reasoning: ['Budget and access checks still run independently.', 'No AI approval or live payment has been inferred.'], missingInformation: [], provider: 'Owner review required' };
 }
 
-export function validateReview(input: unknown): Review {
+export const RELMIO_PROVIDER = 'Relmio via local n8n';
+export const GEMINI_PROVIDER = 'Google Gemini';
+
+export function validateReview(input: unknown, provider = RELMIO_PROVIDER): Review {
   const schema = z.object({ recommendation: z.enum(['approve', 'review', 'decline']), summary: z.string().min(1).max(1200), reasoning: z.array(z.string().max(800)).max(8), missingInformation: z.array(z.string().max(500)).max(8), model: z.string().max(120).optional() });
-  return { ...schema.parse(input), provider: 'Relmio via local n8n' };
+  return { ...schema.parse(input), provider };
 }
