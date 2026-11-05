@@ -29,10 +29,21 @@ Open [Allowance on port 4310](http://127.0.0.1:4310/). On Windows, after the fir
 
 ### Try both roles
 
-1. Create the owner profile and private access code. The login ID for this role is **`owner`**. The name you enter is a display name.
-2. Open **Team**. Try the sample member Maya Chen, or create a new member and assign a task in **Projects**. Edit their role, responsibilities, categories and allowance. Select **Issue code** and privately copy both the member ID and the code shown once.
-3. Sign out and sign in with the member credentials. Request a business purchase for an assigned task. Try a 25 XLM font license from the sample supplier Type Foundry for the Northstar brand identity. Choose **Local simulation**. A sample quote link such as `https://typefoundry.example/quote/font25` is suitable for the demo.
-4. Sign in as owner, open the request and review the checks. If eligible, approve it with a decision note and inspect the simulated receipt and updated balance. Try a purchase beyond the allowance to see a policy block.
+1. At **Set up owner access**, enter your name and create a private code of at least eight characters. Use member ID **`owner`** and that code when you return. A fresh workspace starts with no sample records.
+2. In **Team**, select **Add member**. Use **Ask AI** on that profile if you want help drafting responsibilities and spending limits. Review suggestions before applying them.
+3. In **Projects**, create a project with a budget, then assign a task to the member. In **Spending policy**, add an approved supplier and review the spending limits and evidence rules.
+4. Back in **Team**, select **Issue code** for the member and save the member ID and private code shown once. Open your account menu and sign out, then sign in as that member.
+5. Make a request for the assigned task and approved supplier. Choose **Local simulation**. Return as owner, review the checks, and approve an eligible request with a decision note. Open the simulated receipt and check the remaining project balance.
+
+For a prefilled demo, stop the current server and start a separate database from PowerShell. These settings apply to that terminal:
+
+```powershell
+$env:ALLOWANCE_DB = '.local/allowance-sample.sqlite'
+$env:ALLOWANCE_SAMPLE_DATA = '1'
+npm start
+```
+
+Close that terminal when you finish the sample demo. Start from a new terminal or use `START.cmd` to return to the default workspace.
 
 Member budgets are lifetime totals across projects. Zero blocks spending while keeping chat access. Clearing the member limit returns to the project limits. Without AI, the request form still works and the owner can review eligible requests manually.
 

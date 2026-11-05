@@ -130,3 +130,40 @@ test('Gemini powers the connection check, scoped assistant and purchase review',
     else process.env.GEMINI_MODEL = model;
   }
 });
+
+test('blank workspace starts with owner signup and supports a separately issued member login', async () => {
+  const store = new Store(':memory:', { sampleData: false });
+  const server = createApp(store).listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+  const client = { 'content-type': 'application/json', 'x-allowance-client': 'local-prototype' };
+  const post = (path: string, payload: unknown, cookie?: string) => fetch(base + path, {
+    method: 'POST', headers: cookie ? { ...client, cookie } : client, body: JSON.stringify(payload),
+  });
+  try {
+    assert.deepEqual(await (await fetch(base + '/auth/status')).json(), { setupRequired: true });
+    const owner = await post('/auth/setup', { name: 'Test Business Owner', code: 'synthetic-owner-code' });
+    assert.equal(owner.status, 200);
+    const ownerCookie = owner.headers.get('set-cookie')!.split(';')[0];
+    const data = await (await fetch(base + '/bootstrap', { headers: { cookie: ownerCookie } })).json();
+    assert.equal(data.person.id, 'owner');
+    assert.equal(data.integrations.sampleWorkspace, false);
+    assert.equal(data.policy.autoPay, false);
+    assert.deepEqual(data.people.map((person: { id: string }) => person.id), ['owner']);
+    for (const key of ['projects', 'tasks', 'suppliers', 'requests', 'events', 'messages']) assert.deepEqual(data[key], [], key);
+    assert.equal((await post('/auth/setup', { name: 'Second Owner', code: 'synthetic-other-code' })).status, 409);
+    const created = await post('/setup/people', { name: 'Test Team Member', title: 'Designer' }, ownerCookie);
+    assert.equal(created.status, 201);
+    const member = await created.json();
+    const issued = await post(`/team/${member.id}/code`, {}, ownerCookie);
+    assert.equal(issued.status, 200);
+    const { personId, code } = await issued.json();
+    assert.equal(personId, member.id);
+    const signedIn = await post('/session', { personId, code });
+    assert.equal(signedIn.status, 200);
+    assert.equal((await signedIn.json()).person.role, 'member');
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    store.close();
+  }
+});

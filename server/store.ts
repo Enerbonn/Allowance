@@ -6,7 +6,7 @@ import { GEMINI_PROVIDER, RELMIO_PROVIDER, money, policyChecks, SCALE, type Poli
 
 export class Store {
   db: DatabaseSync;
-  constructor(path = '.local/allowance.sqlite') {
+  constructor(path = '.local/allowance.sqlite', { sampleData = true } = {}) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
@@ -16,7 +16,19 @@ export class Store {
       CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,person_id TEXT NOT NULL,expires INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);`);
-    if (!this.list('people').length) this.seed();
+    if (!this.list('people').length) {
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        if (!this.list('people').length) {
+          if (sampleData) this.seed();
+          else this.initializeBlankWorkspace();
+        }
+        this.db.exec('COMMIT');
+      } catch (error) {
+        this.db.exec('ROLLBACK');
+        throw error;
+      }
+    }
     // An interrupted review remains visible and does not create an untracked payment.
     for (const r of this.requests()) if (r.status === 'analyzing') { r.status = 'needs_review'; r.reasons = ['Review was interrupted. Retry AI review or ask the owner.']; this.saveRequest(r); }
   }
@@ -77,6 +89,16 @@ export class Store {
   personForSession(token: string) { const s = this.db.prepare('SELECT person_id FROM sessions WHERE token=? AND expires>?').get(token, Date.now()) as { person_id: string } | undefined; return s ? this.get<Person>('people', s.person_id) : undefined; }
   setting(key: string) { const s = this.db.prepare('SELECT value FROM settings WHERE key=?').get(key) as { value: string } | undefined; return s?.value; }
   setSetting(key: string, value: string) { this.db.prepare('INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, value); }
+  private initializeBlankWorkspace() {
+    this.put('people', 'owner', { id: 'owner', name: 'Workspace owner', role: 'owner', title: 'Workspace owner', initials: 'WO', active: true } satisfies Person);
+    this.put('policy', 'main', {
+      id: 'main', version: 1, perRequest: 100 * SCALE, autoLimit: 40 * SCALE, projectLimit: 500 * SCALE,
+      allowedCategories: ['Software', 'Creative assets', 'Research', 'Services'],
+      requireEvidence: true, autoPay: false, paused: false, description: '',
+    } satisfies Policy);
+    this.setSetting('workspace-kind', 'blank');
+  }
+
   seed() {
     const people: Person[] = [
       { id: 'owner', name: 'Alex Morgan', role: 'owner', title: 'Studio owner', initials: 'AM', active: true },

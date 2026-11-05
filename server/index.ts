@@ -6,7 +6,7 @@ import express from 'express';
 
 if (existsSync('.env.local')) process.loadEnvFile('.env.local');
 
-const store = new Store(process.env.ALLOWANCE_DB || '.local/allowance.sqlite');
+const store = new Store(process.env.ALLOWANCE_DB || '.local/allowance.sqlite', { sampleData: process.env.ALLOWANCE_SAMPLE_DATA === '1' });
 const app = createApp(store);
 if (process.argv.includes('--production')) {
   app.use(express.static(resolve('dist')));
