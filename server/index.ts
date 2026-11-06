@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { Store } from './store.ts';
-import { createApp } from './app.ts';
+import { createWorkspaceApp } from './workspace-router.ts';
 import { resolve } from 'node:path';
 import express from 'express';
 import { dataDirectory, protectedStorageReady } from './protected-storage.ts';
@@ -23,7 +23,7 @@ if (hostedOrigin) {
   if (process.env.ALLOWANCE_PROXY_TOKEN === process.env.ALLOWANCE_OWNER_SETUP_TOKEN) throw new Error('Use different proxy and owner setup tokens.');
 }
 const store = new Store(process.env.ALLOWANCE_DB || resolve(dataDirectory(), 'allowance.sqlite'), { sampleData: !hostedOrigin && process.env.ALLOWANCE_SAMPLE_DATA === '1' });
-const app = createApp(store);
+const { app, closeWorkspaces } = createWorkspaceApp(store);
 if (hostedOrigin) {
   app.get('/', (_req, res) => res.type('text/plain').send('Allowance API'));
 } else if (process.argv.includes('--production')) {
@@ -36,4 +36,4 @@ if (hostedOrigin) {
 }
 const port = hostedOrigin ? Number(process.env.PORT || 4310) : 4310;
 const server = app.listen(port, hostedOrigin ? '0.0.0.0' : '127.0.0.1', () => console.log(hostedOrigin ? `Allowance API listening on port ${port}` : 'Allowance: http://127.0.0.1:4310'));
-for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => server.close(() => { store.close(); process.exit(0); }));
+for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => server.close(() => { closeWorkspaces(); store.close(); process.exit(0); }));

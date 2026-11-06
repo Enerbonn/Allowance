@@ -47,3 +47,5 @@
 .chat-sources { font-size:.8rem; margin-top:.6rem; }
 .chat-sources summary { cursor:pointer; }
 .chat-sources ul { margin:.35rem 0; padding-inline-start:1.2rem; }
+
+.owner-access-options{display:flex;gap:8px}.owner-access-options button{flex:1;min-height:44px}

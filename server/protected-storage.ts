@@ -2,8 +2,10 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
-export const dataDirectory = () => resolve(process.env.ALLOWANCE_DATA_DIR || '.local');
+export const workspaceStorage = new AsyncLocalStorage<{ directory: string; id: string }>();
+export const dataDirectory = () => workspaceStorage.getStore()?.directory ?? resolve(process.env.ALLOWANCE_DATA_DIR || '.local');
 
 function encryptionKey() {
   const value = process.env.ALLOWANCE_STORAGE_KEY;

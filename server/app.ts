@@ -13,7 +13,9 @@ import { redact, requestsOverride, reviewInstructions } from './assistant-safety
 import { createAiClient } from './ai.ts';
 import {installTestnet} from './testnet.ts';
 
-export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?: string } = {}) {
+export type AppOptions = { aiEndpoint?: string; aiToken?: string; publicSignup?: boolean };
+
+export function createApp(store: Store, options: AppOptions = {}, dispatch?: express.RequestHandler) {
   const app = express();
   app.disable('x-powered-by');
   const publicOrigin = process.env.ALLOWANCE_PUBLIC_ORIGIN;
@@ -41,6 +43,7 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
     next();
   });
   app.use(express.json({ limit: '1500kb' }));
+  if (dispatch) app.use(dispatch);
   const person = (req: Request): Person | undefined => { const c = req.headers.cookie?.split(';').map(v => v.trim()).find(v => v.startsWith('allowance_session=')); const account = c ? store.personForSession(c.slice('allowance_session='.length)) : undefined; return account?.email ? account : undefined; };
   const auth = (req: Request, res: Response, next: NextFunction) => { const p = person(req); if (!p?.active) return res.status(401).json({ error: 'Sign in to continue.' }); res.locals.person = p; next(); };
   const owner = (_req: Request, res: Response, next: NextFunction) => res.locals.person.role === 'owner' ? next() : res.status(403).json({ error: 'Only the owner can do this.' });
@@ -84,7 +87,7 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
     }
   }
   const testnet = installTestnet(app,store,auth,owner);
-  installWorkspace(app, store, { auth, owner, sessionPerson: person, callAI: ai.call, connected: aiConnected, failed: aiFailed, testnet });
+  installWorkspace(app, store, { auth, owner, sessionPerson: person, callAI: ai.call, connected: aiConnected, failed: aiFailed, testnet, publicSignup: options.publicSignup });
   app.get('/api/health', (_req, res) => res.json({ ok: true, app: 'Allowance', paymentMode: 'testnet' }));
   app.delete('/api/session', auth, (req, res) => { const p = req.headers.cookie?.match(/allowance_session=([^;]+)/)?.[1]; if (p) store.db.prepare('DELETE FROM sessions WHERE token=?').run(p); res.clearCookie('allowance_session', { httpOnly:true, secure:!!publicOrigin, sameSite:'strict' }); res.json({ ok: true }); });
   app.post('/api/evidence', auth, (req, res) => {

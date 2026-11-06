@@ -39,18 +39,27 @@ export function assistantMember(store:Store,p:Person) {
   return profile;
 }
 
-export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;owner:RequestHandler;sessionPerson:(req:Request)=>Person|undefined;callAI:(body:Record<string,unknown>)=>Promise<any>;connected:(model?:string)=>void;failed:(error:unknown)=>void;testnet:ReturnType<typeof installTestnet>}) {
+export const ownerSignupSchema = z.object({ name: z.string().trim().min(2).max(80), email: emailSchema, code: z.string().min(8).max(128), setupToken: z.string().max(128).optional() });
+
+export function validOwnerSetupToken(token?: string) {
+  const expected = Buffer.from(process.env.ALLOWANCE_OWNER_SETUP_TOKEN || '');
+  const provided = Buffer.from(token || '');
+  return expected.length >= 24 && provided.length === expected.length && timingSafeEqual(provided, expected);
+}
+
+export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;owner:RequestHandler;sessionPerson:(req:Request)=>Person|undefined;callAI:(body:Record<string,unknown>)=>Promise<any>;connected:(model?:string)=>void;failed:(error:unknown)=>void;testnet:ReturnType<typeof installTestnet>;publicSignup?:boolean}) {
   // One-time migration removes the old identity-only demo sessions.
   if (!store.setting('access-v2')) {store.db.prepare('DELETE FROM sessions').run();store.setSetting('access-v2','enabled');}
   const workspaceOwner=store.get<Person>('people','owner');if(workspaceOwner?.title==='Studio owner'){workspaceOwner.title='Workspace owner';store.put('people','owner',workspaceOwner);}
   const attempts = new Map<string, {count: number; until: number}>();
   const accessCode = z.string().min(8).max(128);
-  const setupSchema = z.object({name:z.string().trim().min(2).max(80),email:emailSchema,code:accessCode,setupToken:z.string().max(128).optional()});
   const loginSchema = z.object({email:emailSchema,code:z.string().min(1).max(128),role:z.enum(['owner','member'])});
   const secure = Boolean(process.env.ALLOWANCE_PUBLIC_ORIGIN);
   const clientIp = (req: Request) => secure ? req.get('x-allowance-client-ip') || req.ip : req.ip;
   function signIn(res: import('express').Response,p: Person) {
-    res.cookie('allowance_session',store.session(p.id),{httpOnly:true,secure,sameSite:'strict',maxAge:12*3600000});
+    const token = store.session(p.id);
+    const session = res.locals.workspaceId ? res.locals.workspaceId + '.' + token : token;
+    res.cookie('allowance_session',session,{httpOnly:true,secure,sameSite:'strict',maxAge:12*3600000});
     res.json({person:p});
   }
   function allowAttempt(keys: string[]) {
@@ -68,17 +77,14 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
   app.get('/api/auth/status',(req,res)=>{
     const session=o.sessionPerson(req), account=store.get<Person>('people','owner');
     const setupRequired=!store.get('credentials','owner');
-    res.json({setupRequired,setupTokenRequired:setupRequired&&secure,ownerNeedsEmail:!setupRequired&&!account?.email,sessionRole:session?.active&&session.email?session.role:undefined});
+    res.json({setupRequired,setupTokenRequired:setupRequired&&secure,...(o.publicSignup === undefined ? {} : {signupTokenRequired:secure&&!o.publicSignup}),ownerNeedsEmail:!setupRequired&&!account?.email,sessionRole:session?.active&&session.email?session.role:undefined});
   });
-  app.post('/api/auth/setup',(req,res)=>{
+  app.post(['/api/auth/setup', '/api/auth/signup'],(req,res)=>{
     if(store.get('credentials','owner'))return res.status(409).json({error:'Owner access is already configured.'});
     if(!allowAttempt([`ip:${clientIp(req)}`,`setup:${clientIp(req)}`]))return res.status(429).json({error:'Too many attempts. Try again in 15 minutes.'});
-    const v=setupSchema.parse(req.body);
-    if(secure){
-      const configured=process.env.ALLOWANCE_OWNER_SETUP_TOKEN || '';
-      const provided=Buffer.from(v.setupToken||'');
-      const expected=Buffer.from(configured);
-      if(expected.length<24||provided.length!==expected.length||!timingSafeEqual(provided,expected))return res.status(403).json({error:'Enter the owner setup token supplied by the deployment operator.'});
+    const v=ownerSignupSchema.parse(req.body);
+    if(secure && !(o.publicSignup && req.path === '/api/auth/signup') && !validOwnerSetupToken(v.setupToken)){
+      return res.status(403).json({error:'Enter the owner setup token supplied by the deployment operator.'});
     }
     uniqueEmail(v.email,'owner');
     const p=store.get<Person>('people','owner')!;
@@ -119,7 +125,7 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
     const id=String(req.params.id);const p=store.get<Person>('people',id);if(!p||p.role==='owner')return res.status(400).json({error:'Choose a team member.'});
     if(!p.active)return res.status(409).json({error:'Restore member access before issuing a new code.'});
     if(!p.email)return res.status(400).json({error:'Add the member’s sign-in email before issuing a code.'});
-    const code='allowance_'+randomBytes(18).toString('base64url');setAccessCode(store,id,code);store.event('Member code reset',`New private access issued for ${p.name}; prior sessions ended.`,res.locals.person.name,null,'access');res.json({email:p.email,code});
+    const code='allowance_'+randomBytes(18).toString('base64url');setAccessCode(store,id,code);store.event('Member code reset',`New private access issued for ${p.name}; prior sessions ended.`,res.locals.person.name,null,'access');res.json({email:p.email,code,workspaceEmail:store.get<Person>('people','owner')?.email});
   });
   app.put('/api/team/:id/profile',o.auth,o.owner,(req,res)=>{
     const id=String(req.params.id);const p=store.get<Person>('people',id);if(!p||p.role==='owner')return res.status(400).json({error:'Choose a team member.'});

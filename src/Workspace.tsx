@@ -10,22 +10,29 @@ type AccessRole = 'owner' | 'member';
 
 export function SignIn({ ready }: { ready: (role: AccessRole) => Promise<void> }) {
   const [role, setRole] = useState<AccessRole | null>(null);
-  const [status, setStatus] = useState<{ setupRequired: boolean; ownerNeedsEmail: boolean; setupTokenRequired: boolean; sessionRole?: AccessRole } | null>(null);
+  const [mode, setMode] = useState<'signin' | 'signup' | 'email'>('signin');
+  const [workspaceEmail, setWorkspaceEmail] = useState('');
+  const [status, setStatus] = useState<{ setupRequired: boolean; ownerNeedsEmail: boolean; setupTokenRequired: boolean; signupTokenRequired?: boolean; sessionRole?: AccessRole } | null>(null);
   const [email, setEmail] = useState('');
   const [setupToken, setSetupToken] = useState('');
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const setup = role === 'owner' && status?.setupRequired;
-  const migrate = role === 'owner' && status?.ownerNeedsEmail;
+  const setup = role === 'owner' && mode === 'signup';
+  const migrate = role === 'owner' && mode === 'email';
 
   async function choose(nextRole: AccessRole) {
     setRole(nextRole);
+    setMode('signin');
     setStatus(null);
     setError('');
     setBusy(true);
-    try { setStatus(await api('/auth/status')); }
+    try {
+      const access = await api('/auth/status');
+      setStatus(access);
+      if (nextRole === 'owner' && access.setupRequired) setMode('signup');
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
@@ -36,8 +43,8 @@ export function SignIn({ ready }: { ready: (role: AccessRole) => Promise<void> }
     setError('');
     try {
       if (!resume) {
-        const payload = setup ? { name, email, code, setupToken } : migrate ? { email, code } : { email, code, role };
-        await api(setup ? '/auth/setup' : migrate ? '/auth/owner-email' : '/session', { method: 'POST', body: JSON.stringify(payload) });
+        const payload = setup ? { name, email, code, setupToken } : migrate ? { email, code } : { email, code, role, workspaceEmail };
+        await api(setup ? '/auth/signup' : migrate ? '/auth/owner-email' : '/session', { method: 'POST', body: JSON.stringify(payload) });
       }
       await ready(role);
       setCode('');
@@ -60,17 +67,21 @@ export function SignIn({ ready }: { ready: (role: AccessRole) => Promise<void> }
   </section>;
 
   return <form className="signin-panel" onSubmit={e => { e.preventDefault(); void enter(); }}>
-    <button className="text-btn role-back" type="button" disabled={busy} onClick={() => { setRole(null); setCode(''); setEmail(''); setSetupToken(''); setError(''); }}><ArrowLeft size={16}/>Choose a role</button>
+    <button className="text-btn role-back" type="button" disabled={busy} onClick={() => { setRole(null); setCode(''); setEmail(''); setWorkspaceEmail(''); setSetupToken(''); setError(''); }}><ArrowLeft size={16}/>Choose a role</button>
     <h2>{setup ? 'Create your owner account' : migrate ? 'Set your owner sign-in email' : role === 'owner' ? 'Sign in as business owner' : 'Sign in as team member'}</h2>
     {!status && busy && <p role="status">Checking workspace access…</p>}
-    {role === 'member' && status?.setupRequired && <p>The business owner needs to set up the workspace and add your email and issue a private code first.</p>}
-    {status && (role === 'owner' || !status.setupRequired) && <>
-      {status.sessionRole === role && <button className="secondary-btn" type="button" disabled={busy} onClick={() => void enter(true)}>Continue existing session</button>}
+    {role === 'owner' && <div className="owner-access-options" role="group" aria-label="Owner access">
+      {(['signin', 'signup'] as const).map(option => <button key={option} type="button" className={mode === option ? 'primary-btn' : 'secondary-btn'} aria-pressed={mode === option} disabled={busy} onClick={() => { setMode(option); setCode(''); setError(''); }}>{option === 'signin' ? 'Sign in' : 'Sign up'}</button>)}
+    </div>}
+    {status && <>
+      {!setup && !migrate && status.sessionRole === role && <button className="secondary-btn" type="button" disabled={busy} onClick={() => void enter(true)}>Continue existing session</button>}
       <p>{setup ? 'Use an email you can share with your team and create a private access code.' : migrate ? 'Enter your current owner code once to add your email.' : 'Enter your sign-in email and private access code.'}</p>
+      {role === 'owner' && mode === 'signin' && status.ownerNeedsEmail && <button className="text-btn" type="button" disabled={busy} onClick={() => { setMode('email'); setError(''); }}>Add an email to an older owner account</button>}
+      {role === 'member' && <label>Workspace owner email (if provided)<input type="email" maxLength={254} value={workspaceEmail} onChange={e => setWorkspaceEmail(e.target.value)}/><small>Use the workspace email your owner shared with your sign-in details.</small></label>}
       {setup && <label>Your name<input autoComplete="name" required minLength={2} maxLength={80} value={name} onChange={e => setName(e.target.value)}/></label>}
       <label>Email<input type="email" autoComplete="username" required maxLength={254} value={email} onChange={e => setEmail(e.target.value)}/></label>
       <label>Private access code<input type="password" autoComplete={setup ? 'new-password' : 'current-password'} required minLength={setup || migrate ? 8 : 1} maxLength={128} value={code} onChange={e => setCode(e.target.value)} placeholder={setup ? 'At least 8 characters' : undefined}/></label>
-      {setup && status.setupTokenRequired && <label>Owner setup token<input type="password" autoComplete="off" required value={setupToken} onChange={e => setSetupToken(e.target.value)}/></label>}
+      {setup && (status.signupTokenRequired ?? status.setupTokenRequired) && <label>Owner setup token<input type="password" autoComplete="off" required value={setupToken} onChange={e => setSetupToken(e.target.value)}/></label>}
       <button disabled={busy} className="primary-btn">{busy ? <LoaderCircle className="spin" size={16}/> : <LogIn size={16}/>} {setup ? 'Create account' : migrate ? 'Save email and sign in' : 'Sign in'}</button>
     </>}
     {error && <p role="alert" className="form-error">{error}</p>}
@@ -78,7 +89,7 @@ export function SignIn({ ready }: { ready: (role: AccessRole) => Promise<void> }
 }
 
 export function TeamConsole({data,refresh,add,ask}:{data:any;refresh:()=>Promise<void>;add:()=>void;ask:(text:string)=>void}){
- const owner=data.person.role==='owner';const [editing,setEditing]=useState<any>(null),[secret,setSecret]=useState<{email:string;code:string}|null>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[query,setQuery]=useState('');
+ const owner=data.person.role==='owner';const [editing,setEditing]=useState<any>(null),[secret,setSecret]=useState<{email:string;code:string;workspaceEmail?:string}|null>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[query,setQuery]=useState('');
  const members=data.people.filter((p:any)=>`${p.name} ${p.title} ${p.email || ''}`.toLowerCase().includes(query.toLowerCase()));
  async function reset(p:any){setBusy(true);setError('');try{setSecret(await api(`/team/${p.id}/code`,{method:'POST'}));await refresh();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
  async function save(e:React.FormEvent){e.preventDefault();setBusy(true);setError('');try{await api(`/team/${editing.id}/profile`,{method:'PUT',body:JSON.stringify({name:editing.name,title:editing.title,email:editing.email,description:editing.description,goal:editing.goal,spendingGuidance:editing.spendingGuidance,budget:editing.budget||null,weeklyBudget:editing.weeklyBudget||null,allowedCategories:editing.allowedCategories})});setEditing(null);await refresh();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
@@ -87,7 +98,7 @@ export function TeamConsole({data,refresh,add,ask}:{data:any;refresh:()=>Promise
  <div className="team-toolbar"><label>Find a person<input placeholder="Name, role or email" value={query} onChange={e=>setQuery(e.target.value)}/></label><span>{members.length} people · XLM allowances</span></div>
  <p className="table-scroll-hint">On a narrow screen, scroll the table sideways to see allowances and access controls.</p><div className="team-table-wrap" tabIndex={0} role="region" aria-label="Scrollable team directory"><table className="team-table"><caption className="sr-only">Team profiles, member access and spending allowances</caption><thead><tr><th>Name and email</th><th>Role & responsibilities</th><th>Spending limits</th><th>Access</th>{owner&&<th>Manage</th>}</tr></thead><tbody>{members.map((p:any)=><tr key={p.id}><td><strong>{p.name}</strong><small>{p.email || 'Email needed'}</small><span className="badge neutral">{p.role==='owner'?'Owner':'Team member'}</span></td><td><strong>{p.title}</strong><p>{p.description||(p.role==='owner'?'Sets team responsibilities, purchasing rules and budgets; reviews exceptions.':'Add a description so requests can be checked against their actual work.')}</p>{p.goal&&<small>Goal · {p.goal}</small>}{p.spendingGuidance&&<small>Spending · {p.spendingGuidance}</small>}<small>{data.tasks.filter((t:any)=>t.assigneeId===p.id).length} assigned tasks</small></td><td>{p.role==='owner'?<span>Workspace oversight</span>:<><strong>{p.budget===undefined?'Uses project limits':fmt(p.budget)+' XLM'}</strong><small>{fmt(p.spent||0)} spent{p.budget!==undefined?' · '+fmt(Math.max(0,p.budget-(p.spent||0)))+' left':''}</small><small>All-time allowance across projects.</small><strong>{p.weeklyBudget===undefined?'No weekly cap':fmt(p.weeklyBudget)+' XLM per week'}</strong>{p.weeklyBudget!==undefined&&<small>{fmt(Math.max(0,p.weeklyBudget-p.weeklySpent))} XLM left this week</small>}</>}</td><td><span className={'badge '+(p.active?'paid':'blocked')}>{p.active?'Active':'Paused'}</span><small>{p.codeSet?'Private code set':'Code not issued'}</small></td>{owner&&<td>{p.role!=='owner'&&<div className="team-actions"><button className="secondary-btn" onClick={()=>setEditing({...p,budget:p.budget===undefined?'':String(p.budget/1e7),weeklyBudget:p.weeklyBudget===undefined?'':String(p.weeklyBudget/1e7),description:p.description||'',email:p.email||'',goal:p.goal||'',spendingGuidance:p.spendingGuidance||'',allowedCategories:p.allowedCategories||data.categories})}>Edit profile</button><button disabled={busy||!p.email||!p.active} className="text-btn" onClick={()=>void reset(p)}><KeyRound size={13}/>{p.codeSet?'Reset code':'Issue code'}</button><button className="text-btn" onClick={()=>ask(`Help improve ${p.name}'s responsibilities and purchasing guidance. Use the saved profile, ask for missing facts, and propose changes for me to review.`)}><Sparkles size={13}/>Draft responsibilities</button><button className="text-btn" disabled={busy} onClick={async()=>{setError('');setBusy(true);try{await api(`/team/${p.id}/toggle`,{method:'POST'});await refresh();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}}>{p.active?'Remove access':'Restore access'}</button><small>{p.active?'Removing access revokes the code and ends sessions. Past requests stay.':'Issue a new code after restoring access.'}</small></div>}</td>}</tr>)}</tbody></table>{!members.length&&<div className="empty-state"><Users/><p>No people match your search.</p></div>}</div>
  {error&&<p role="alert" className="form-error">{error}</p>}
- {secret&&<WorkspaceDialog label="New member access code" close={()=>setSecret(null)}><section className="access-card"><button className="icon-btn close-access" aria-label="Close access code" onClick={()=>setSecret(null)}><X/></button><KeyRound size={28}/><h2>Share this privately</h2><p>This code is shown once. A reset ends earlier sessions and replaces the previous code.</p><label>Sign-in email<input readOnly value={secret.email}/></label><label>Private code<input readOnly value={secret.code}/></label><button className="secondary-btn" onClick={()=>void navigator.clipboard.writeText(`Email: ${secret.email}\nPrivate code: ${secret.code}`)}><Copy size={15}/>Copy sign-in details</button><button className="primary-btn" onClick={()=>setSecret(null)}>I’ve saved the details</button></section></WorkspaceDialog>}
+ {secret&&<WorkspaceDialog label="New member access code" close={()=>setSecret(null)}><section className="access-card"><button className="icon-btn close-access" aria-label="Close access code" onClick={()=>setSecret(null)}><X/></button><KeyRound size={28}/><h2>Share this privately</h2><p>This code is shown once. A reset ends earlier sessions and replaces the previous code.</p>{secret.workspaceEmail && <label>Workspace owner email<input readOnly value={secret.workspaceEmail}/></label>}<label>Sign-in email<input readOnly value={secret.email}/></label><label>Private code<input readOnly value={secret.code}/></label><button className="secondary-btn" onClick={()=>void navigator.clipboard.writeText([secret.workspaceEmail && 'Workspace owner email: '+secret.workspaceEmail, 'Email: '+secret.email, 'Private code: '+secret.code].filter(Boolean).join('\n'))}><Copy size={15}/>Copy sign-in details</button><button className="primary-btn" onClick={()=>setSecret(null)}>I’ve saved the details</button></section></WorkspaceDialog>}
  {editing&&<WorkspaceDialog label="Edit team profile" close={()=>setEditing(null)}><form className="access-card profile-editor" onSubmit={save}><h2>Edit work profile</h2><p>These details help the assistant match requests to the member’s work.</p>{[['name','Name'],['title','Role']].map(([k,label])=><label key={k}>{label}<input required value={editing[k]} onChange={e=>setEditing({...editing,[k]:e.target.value})}/></label>)}<label>Sign-in email<input type="email" autoComplete="off" required maxLength={254} value={editing.email} onChange={e=>setEditing({...editing,email:e.target.value})}/><small>Changing this email ends their sessions and requires a new code.</small></label><label>Responsibilities & purchasing guidance<textarea rows={5} maxLength={3000} value={editing.description} onChange={e=>setEditing({...editing,description:e.target.value})}/></label><label>Goal<textarea rows={2} maxLength={1000} value={editing.goal} onChange={e=>setEditing({...editing,goal:e.target.value})}/></label><label>Spending guidance<textarea rows={2} maxLength={1000} value={editing.spendingGuidance} onChange={e=>setEditing({...editing,spendingGuidance:e.target.value})}/></label><label>Total spending allowance (XLM)<input inputMode="decimal" placeholder="Leave blank to use project limits" value={editing.budget} onChange={e=>setEditing({...editing,budget:e.target.value})}/><small>All-time total across projects. A new limit cannot undo earlier payments.</small></label><label>Weekly cap (XLM)<input inputMode="decimal" placeholder="No weekly cap" value={editing.weeklyBudget} onChange={e=>setEditing({...editing,weeklyBudget:e.target.value})}/><small>Resets Monday at midnight Manila time. Enter 0 to block spending.</small></label><fieldset><legend>Permitted purchase categories</legend><div className="category-options">{data.categories.map((c:string)=><label key={c}><input type="checkbox" checked={editing.allowedCategories.includes(c)} onChange={e=>setEditing({...editing,allowedCategories:e.target.checked?[...editing.allowedCategories,c]:editing.allowedCategories.filter((x:string)=>x!==c)})}/>{c}</label>)}</div></fieldset>{error&&<p role="alert" className="form-error">{error}</p>}<div className="modal-footer"><button type="button" className="secondary-btn" onClick={()=>setEditing(null)}>Cancel</button><button disabled={busy} className="primary-btn"><Save size={15}/>Save profile</button></div></form></WorkspaceDialog>}
  </>;
 }

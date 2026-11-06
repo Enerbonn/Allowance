@@ -6,7 +6,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {existsSync,readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {Store} from './store.ts';
-import {dataDirectory, protect, protectedStorageReady, unprotect} from './protected-storage.ts';
+import {dataDirectory, protect, protectedStorageReady, unprotect, workspaceStorage} from './protected-storage.ts';
 import { z } from 'zod';
 import {money,units,type Supplier} from './domain.ts';
 
@@ -56,7 +56,9 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   const {owner:address} = project();
   const saved = store.get<WalletConfig>('testnet-wallet',address);
   const previous = legacy();
-  return saved || (previous?.owner===address ? previous : {owner:address,deviceHash:address?createHash('sha256').update('allowance:'+address).digest('hex'):'',asset,contracts:EVENT_CONTRACTS});
+  const workspace = workspaceStorage.getStore()?.id;
+  const deviceScope = workspace ? 'allowance:' + workspace + ':' : 'allowance:';
+  return saved || (previous?.owner===address ? previous : {owner:address,deviceHash:address?createHash('sha256').update(deviceScope+address).digest('hex'):'',asset,contracts:EVENT_CONTRACTS});
  }
  function keyName(c: WalletConfig, role: string) {
   return legacy()?.owner===c.owner ? `testnet-${role}` : `testnet-${role}-${c.deviceHash}`;
