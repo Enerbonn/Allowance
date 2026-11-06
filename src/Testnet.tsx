@@ -296,9 +296,9 @@ export function TestnetPanel({ data, focus, addSupplier }: { data: { suppliers: 
           <label>Testnet Gas Station key<input type="password" autoComplete="off" value={gasKey} onChange={e => setGasKey(e.target.value)} maxLength={80} required placeholder={state.gasKeyStored ? 'Protected key saved' : 'Paste the key from Velo'}/></label>
           <button className="secondary-btn" disabled={!!busy || !connected || !gasKey.trim()}>Save key</button>
         </form>}
-        <h4 className="payment-subheading">Choose a supplier for test purchases</h4>
+        <h4 className="payment-subheading">Optional setup for a test purchase</h4>
         <p>A supplier is a shop or service your team can request to buy from, such as a print shop or a design tool. Allowance sends test funds to a demo account when you link a supplier here. The actual business receives no payment.</p>
-        <p className="payment-step-status"><strong>{supplierLinked ? 'Demo recipient linked' : 'Demo recipient needed'}</strong>
+        <p className="payment-step-status"><strong>{supplierLinked ? 'Demo recipient linked' : 'Demo recipient for purchase testing'}</strong>
           {' · '}{supplierLinked ? 'Test payments for this supplier go to the demo account.' : !approved.length ? 'Add and approve a supplier first.' : !state.initialized ? 'Create test payment accounts in step 2 first.' : 'Choose a supplier and link the demo recipient.'}
         </p>
         <div className="testnet-actions">

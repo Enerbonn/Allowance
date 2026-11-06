@@ -2,7 +2,7 @@ import { createSetupRecord, isSetupKind } from './setup.ts';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { randomUUID } from 'node:crypto';
 import { Store } from './store.ts';
-import { categories, requestSchema, policySchema, units, offlineReview, validateReview, money, type Person, type Policy, type SpendRequest, type Task } from './domain.ts';
+import { categories, requestSchema, policySchema, units, offlineReview, validateReview, money, type Person, type Policy, type SpendRequest, type Supplier, type Task } from './domain.ts';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { resolve } from 'node:path';
@@ -177,6 +177,16 @@ export function createApp(store: Store, options: AppOptions = {}, dispatch?: exp
     store.put('policy', 'main', policy); store.event('Spending policy updated', `Version ${policy.version} is active. ${policy.paused ? 'New spending is paused.' : 'Spending checks use the latest rules.'}`, res.locals.person.name, null, 'policy'); res.json(policy);
   });
   app.post('/api/team/:id/toggle', auth, owner, (req, res) => { const p = store.get<Person>('people', String(req.params.id)); if (!p || p.role === 'owner') return res.status(400).json({ error: 'Choose a team member.' }); p.active = !p.active; p.profileVersion=(p.profileVersion||0)+1; store.db.exec('BEGIN IMMEDIATE'); try { store.put('people', p.id, p); if (!p.active) { store.db.prepare('DELETE FROM sessions WHERE person_id=?').run(p.id); store.db.prepare("DELETE FROM records WHERE kind='credentials' AND id=?").run(p.id); } store.db.exec('COMMIT'); } catch(error) { store.db.exec('ROLLBACK'); throw error; } store.event(p.active ? 'Member access restored' : 'Member access paused', p.name, res.locals.person.name, null, 'policy'); res.json(p); });
+  app.post('/api/suppliers/:id/approve', auth, owner, (req, res) => {
+    const supplier = store.get<Supplier>('suppliers', String(req.params.id));
+    if (!supplier) return res.status(404).json({ error: 'Supplier not found.' });
+    if (!supplier.approved) {
+      supplier.approved = true;
+      store.put('suppliers', supplier.id, supplier);
+      store.event('Supplier approved', supplier.name, res.locals.person.name, null, 'policy');
+    }
+    res.json(supplier);
+  });
   app.post('/api/setup/:kind', auth, owner, (req, res) => {
     const kind = String(req.params.kind);
     if (!isSetupKind(kind)) return res.status(404).json({ error: 'Setup record type not found.' });

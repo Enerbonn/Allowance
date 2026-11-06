@@ -5,7 +5,7 @@ import { createApp } from './app.ts';
 import type { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { Keypair } from '@stellar/stellar-sdk';
-import { units } from './domain.ts';
+import { units, type Supplier } from './domain.ts';
 import {setAccessCode} from './workspace.ts';
 
 test('API isolates identities, owner controls, and cross-origin writes', async () => {
@@ -34,6 +34,18 @@ test('API isolates identities, owner controls, and cross-origin writes', async (
     assert.equal((await fetch(base + '/setup/people', { method: 'POST', headers: memberHeaders, body: JSON.stringify({ name: 'Test Member', title: 'Designer' }) })).status, 403);
     const ownerLogin = await fetch(base + '/session', { method: 'POST', headers, body: JSON.stringify({ email: 'owner@allowance.example', role: 'owner', code:'owner-test-code' }) });
     const ownerHeaders = { ...headers, cookie: ownerLogin.headers.get('set-cookie')!.split(';')[0] };
+    const createdSupplier = await fetch(base + '/setup/suppliers', {
+      method: 'POST', headers: ownerHeaders,
+      body: JSON.stringify({ name: 'Demo Print Shop', domain: 'printshop.example', category: 'Services', approved: false }),
+    });
+    assert.equal(createdSupplier.status, 201);
+    const supplier = await createdSupplier.json();
+    const approvalUrl = base + '/suppliers/' + supplier.id + '/approve';
+    assert.equal((await fetch(approvalUrl, { method: 'POST', headers: memberHeaders })).status, 403);
+    assert.equal(store.get<Supplier>('suppliers', supplier.id)?.approved, false);
+    const approval = await fetch(approvalUrl, { method: 'POST', headers: ownerHeaders });
+    assert.equal(approval.status, 200);
+    assert.deepEqual(await approval.json(), { ...supplier, approved: true });
     const createdMember = await fetch(base + '/setup/people', { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ name: 'Demo Researcher', email: 'researcher@allowance.example', title: 'Research contractor' }) });
     assert.equal(createdMember.status, 201); const member = await createdMember.json(); assert.equal(member.role, 'member');
     const createdProject = await fetch(base + '/setup/projects', { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ name: 'Demo research project', description: 'A synthetic project for access verification.', budget: '150' }) });
