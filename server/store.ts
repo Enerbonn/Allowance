@@ -89,18 +89,41 @@ export class Store {
     this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(r.id, r.idempotencyKey, JSON.stringify(r));
     this.event('Request received', r.title, this.get<Person>('people', r.requesterId)!.name, r.id); return { request: r, duplicate: false };
   }
-  setReview(id: string, ai: Review) {
-    const r = this.request(id)!; if (r.status !== 'analyzing') return r;
-    r.ai = ai; const checks = this.checks(r); r.reasons = checks.filter(c => !c.pass).map(c => c.detail);
-    r.status = r.reasons.length ? 'blocked' : 'needs_review';
-    this.saveRequest(r); this.event('Review completed', ai.summary, ai.provider, r.id, 'review');
-    const p = this.policy();
-    if (r.policyVersion !== p.version || (r.profileVersion!==undefined && r.profileVersion!==(this.get<Person>('people',r.requesterId)?.profileVersion||0))) { r.status = 'needs_review'; r.reasons.push('Policy changed during the review. The owner must review the current rules.'); this.saveRequest(r); return r; }
-    const supplier = this.get<Supplier>('suppliers', r.supplierId);
+  private reviewIsCurrent(r: SpendRequest) {
+    return r.policyVersion === this.policy().version &&
+      (r.profileVersion === undefined || r.profileVersion === (this.get<Person>('people', r.requesterId)?.profileVersion || 0));
+  }
+  private trustedAssessment(r: SpendRequest) {
+    return !!r.ai && [RELMIO_PROVIDER, GEMINI_PROVIDER].includes(r.ai.provider) &&
+      !r.ai.missingInformation.length;
+  }
+  canAutoApprove(r: SpendRequest) {
+    const policy = this.policy();
+    if (r.status !== 'needs_review' || !this.reviewIsCurrent(r) || !this.trustedAssessment(r) ||
+        r.ai?.recommendation !== 'approve' || this.checks(r).some(check => !check.pass)) return false;
+    if (r.amount > policy.autoLimit || !(r.mode === 'testnet' ? policy.autoTestnet : policy.autoPay)) return false;
+    if (!policy.requireEvidence) return true;
+    const supplierHost = this.get<Supplier>('suppliers', r.supplierId)?.domain.toLowerCase();
     const quoteHost = URL.canParse(r.evidenceUrl) ? new URL(r.evidenceUrl).hostname.toLowerCase() : '';
-    const supplierHost = supplier?.domain.toLowerCase();
-    const quoteMatches = !p.requireEvidence || Boolean(supplierHost && (quoteHost === supplierHost || quoteHost.endsWith('.' + supplierHost)));
-    if (quoteMatches && r.mode === 'simulated' && r.status === 'needs_review' && [RELMIO_PROVIDER, GEMINI_PROVIDER].includes(ai.provider) && ai.recommendation === 'approve' && !ai.missingInformation.length && p.autoPay && r.amount <= p.autoLimit) return this.pay(id, 'Policy-approved assistant');
+    return !!supplierHost && (quoteHost === supplierHost || quoteHost.endsWith('.' + supplierHost));
+  }
+  setReview(id: string, ai: Review) {
+    const r = this.request(id)!;
+    if (r.status !== 'analyzing') return r;
+    r.ai = ai;
+    r.reasons = this.checks(r).filter(check => !check.pass).map(check => check.detail);
+    r.status = r.reasons.length ? 'blocked' : 'needs_review';
+    if (r.status === 'needs_review') {
+      if (!this.reviewIsCurrent(r)) {
+        r.reasons.push('Policy changed during the assessment. Review the request under the current rules.');
+      } else if (this.trustedAssessment(r) && ai.recommendation === 'decline') {
+        r.status = 'declined';
+        r.reasons.push(ai.summary);
+      }
+    }
+    this.saveRequest(r);
+    this.event(r.status === 'declined' ? 'Assistant declined request' : 'Assessment completed', ai.summary, ai.provider, r.id, 'review');
+    if (r.mode === 'simulated' && this.canAutoApprove(r)) return this.pay(id, 'Policy-approved assistant');
     return r;
   }
   pay(id: string, actor: string) {

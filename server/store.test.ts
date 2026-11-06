@@ -36,6 +36,43 @@ test('missing AI connection never silently approves or pays', () => {
   const s = new Store(':memory:'); const r = candidate(s); r.status = 'analyzing'; s.create(r); s.setReview(r.id, offlineReview());
   assert.equal(s.request(r.id)!.status, 'needs_review'); assert.equal(s.request(r.id)!.receipt, null); s.close();
 });
+test('clear declines close the request while uncertain or stale assessments go to the owner', () => {
+  const store = new Store(':memory:');
+  try {
+    const decline = {
+      recommendation: 'decline' as const, summary: 'This is a personal purchase.',
+      reasoning: ['The request serves personal use.'], missingInformation: [],
+      provider: 'Relmio via local n8n',
+    };
+    const clear = { ...candidate(store), status: 'analyzing' as const };
+    const uncertain = { ...candidate(store), status: 'analyzing' as const };
+    const stale = { ...candidate(store), status: 'analyzing' as const, policyVersion: 0 };
+    for (const request of [clear, uncertain, stale]) store.create(request);
+    assert.equal(store.setReview(clear.id, decline).status, 'declined');
+    assert.deepEqual(store.request(clear.id)?.reasons, [decline.summary]);
+    assert.equal(store.setReview(uncertain.id, { ...decline, missingInformation: ['What task needs this?'] }).status, 'needs_review');
+    assert.equal(store.setReview(stale.id, decline).status, 'needs_review');
+  } finally { store.close(); }
+});
+test('Testnet automation requires explicit opt-in and rechecks current spending authority', () => {
+  const store = new Store(':memory:');
+  try {
+    const request = { ...candidate(store), status: 'analyzing' as const, mode: 'testnet' as const };
+    store.create(request);
+    const reviewed = store.setReview(request.id, {
+      recommendation: 'approve', summary: 'Needed for the assigned work.',
+      reasoning: ['Matches the assigned campaign.'], missingInformation: [],
+      provider: 'Relmio via local n8n',
+    });
+    assert.equal(store.canAutoApprove(reviewed), false);
+    const policy = { ...store.policy(), autoTestnet: true };
+    store.put('policy', 'main', policy);
+    assert.equal(store.canAutoApprove(reviewed), true);
+    assert.equal(store.request(request.id)?.receipt, null);
+    store.put('policy', 'main', { ...policy, paused: true });
+    assert.equal(store.canAutoApprove(reviewed), false);
+  } finally { store.close(); }
+});
 test('automatic simulation requires real provider approval and no missing information', () => {
   const s = new Store(':memory:'); const r = candidate(s); r.status = 'analyzing'; s.create(r);
   s.setReview(r.id, { recommendation: 'approve', summary: 'Task related.', reasoning: [], missingInformation: ['Need quote details.'], provider: 'Relmio via local n8n' });

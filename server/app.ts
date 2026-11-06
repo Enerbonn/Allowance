@@ -54,6 +54,10 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
     aiState = { ...aiState, connected: false, lastChecked: new Date().toISOString(), model: null, message: ai.errorMessage(error) };
   };
   async function review(r: SpendRequest) {
+    if (store.checks(r).some(check => !check.pass)) {
+      store.setReview(r.id, { ...offlineReview(), summary: 'This request is blocked by the current spending rules.' });
+      return;
+    }
     try {
       if (requestsOverride(r.title + ' ' + r.purpose)) {
         store.setReview(r.id, { ...offlineReview(), summary: 'This request asks to bypass the spending rules. The owner must review it.' });
@@ -62,7 +66,18 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
       const raw = await ai.call({ agentInstructions: reviewInstructions, checks: store.checks(r), request: { title: r.title, purpose: r.purpose, amount: money(r.amount), currency: 'XLM', category: r.category, requester: assistantMember(store, store.get<Person>('people',r.requesterId)!), evidenceSupplied: !!(r.evidenceUrl || r.evidenceId), attachment: r.evidenceId ? 'File retained for human review; contents not inspected by the AI.' : null }, task: store.get('tasks', r.taskId), supplier: store.suppliers().find(s => s.id === r.supplierId), policy: { description: store.policy().description, perRequest: money(store.policy().perRequest), autoLimit: money(store.policy().autoLimit) } });
       const result = validateReview(raw, ai.provider ?? undefined);
       aiConnected(result.model);
-      store.setReview(r.id, { ...result, summary: redact(result.summary), reasoning: result.reasoning.map(redact), missingInformation: result.missingInformation.map(redact) });
+      const reviewed = store.setReview(r.id, { ...result, summary: redact(result.summary), reasoning: result.reasoning.map(redact), missingInformation: result.missingInformation.map(redact) });
+      if (reviewed.mode === 'testnet' && store.canAutoApprove(reviewed)) {
+        try {
+          await testnet.approveRequest(reviewed.id, 'Policy-approved assistant', result.summary && redact(result.summary), true);
+        } catch {
+          const current = store.request(reviewed.id);
+          if (current?.status === 'needs_review') {
+            current.reasons.push('Automatic Testnet payment could not start. The owner can check payment setup and try again.');
+            store.saveRequest(current);
+          }
+        }
+      }
     } catch (error) {
       aiFailed(error);
       store.setReview(r.id, offlineReview());
@@ -96,7 +111,7 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
     const created = store.create(r); if (!created.duplicate) void review(r);
     res.status(created.duplicate ? 200 : 202).json(created);
   });
-  app.post('/api/requests/:id/review', auth, (req, res) => { const r = store.request(String(req.params.id)); if (!r || !visible(res, r)) return res.status(404).json({ error: 'Request not found.' }); if (!['needs_review', 'blocked'].includes(r.status)) return res.status(409).json({ error: 'This request cannot be reviewed again.' }); r.status = 'analyzing'; store.saveRequest(r); void review(r); res.json(r); });
+  app.post('/api/requests/:id/review', auth, (req, res) => { const r = store.request(String(req.params.id)); if (!r || !visible(res, r)) return res.status(404).json({ error: 'Request not found.' }); if (!['needs_review', 'blocked'].includes(r.status)) return res.status(409).json({ error: 'This request cannot be reviewed again.' }); r.status = 'analyzing'; r.policyVersion = store.policy().version; r.profileVersion = store.get<Person>('people', r.requesterId)?.profileVersion || 0; store.saveRequest(r); void review(r); res.json(r); });
   app.post('/api/requests/:id/decision', auth, owner, (req, res) => {
     const r = store.request(String(req.params.id)); if (!r) return res.status(404).json({ error: 'Request not found.' });
     const action = req.body.action; const note = String(req.body.note || '').trim().slice(0, 1500);

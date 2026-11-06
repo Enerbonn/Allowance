@@ -83,7 +83,7 @@ flowchart TD
     A --> P{Independent spending checks}
     P -- blocked or unclear --> O[Block or owner review]
     P -- eligible demo --> D[Simulated receipt]
-    P -- owner-approved Testnet --> V[Velo Gas sponsorship and submission]
+    P -- eligible or owner-approved Testnet --> V[Velo Gas sponsorship and submission]
     V --> E[Noir escrow authorization on Stellar Testnet]
     E --> C[Merchant claim and confirmation]
 ```
@@ -111,7 +111,7 @@ The preview shows the member and the field. When the owner applies it, the serve
 
 The Markdown file contains assistant instructions. SQLite stores chats, reviewed notes, requests and decisions. Before each call the backend retrieves recent messages and keyword matches from the person's permitted records and calculates exact totals separately. Owners can ask about the workspace ledger. Members can only retrieve their own requests and chats, plus shared owner-reviewed notes. The assistant can miss a paraphrased older reference, so use a request title or ID for a precise lookup. No embedding service is required. Evidence files are available for human review; the assistant sees whether evidence was supplied.
 
-Before spending, the backend checks membership, assignment, supplier, category, evidence and available budgets. It uses **integer stroops** for exact amounts, **SQLite transactions** for competing approvals, and **idempotency keys** to prevent duplicate requests. Uncertain Testnet outcomes keep a reservation for reconciliation.
+Before spending, the backend checks membership, assignment, supplier, category, evidence and available budgets. Clear assistant declines close the request with a reason. Uncertain assessments, missing information, or purchases above the automatic limit go to the owner. Enable **Allow automatic Testnet payments** in Spending policy after configuring the Testnet wallet, Noir agent, escrow and Velo Gas. The separate switch keeps existing workspaces from enabling Testnet spending just because simulation is already enabled. It uses **integer stroops** for exact amounts, **SQLite transactions** for competing approvals, and **idempotency keys** to prevent duplicate requests. Uncertain Testnet outcomes keep a reservation for reconciliation.
 
 ## AI credentials and APIs
 

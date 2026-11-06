@@ -234,25 +234,50 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   const signed=String(req.body.signedXdr||'');validateOwnerSetupSignature(signed,pending.hash,c.owner);
   pending.state='submitting';store.put('wallet-pending',pending.id,pending);const hash=await noir.submit(signed);pending.state='confirmed';pending.hash=hash;store.put('wallet-pending',pending.id,pending);store.event('Testnet setup confirmed',`${pending.kind}: ${hash}`,res.locals.person.name,null,'chain');await inspect(c);res.json({hash});
  }));
- app.post('/api/requests/:id/testnet',auth,owner,async(req,res)=>{
-  if(busy)return res.status(409).json({error:'Another chain operation is running. Wait, then reconcile its status.'});busy=true;
+ async function approveRequest(id: string, actor: string, note: string, automatic = false) {
+  assertIdle();
+  busy=true;
   try{
-   const id=String(req.params.id),r=store.request(id);if(!r||r.mode!=='testnet')throw new Error('Choose a Testnet purchase request.');const existing=store.get<any>('chain-operations',id);if(existing?.state==='claimed')return res.json(existing);
+   let r=store.request(id);if(!r||r.mode!=='testnet')throw new Error('Choose a Testnet purchase request.');const existing=store.get<any>('chain-operations',id);if(existing?.state==='claimed')return existing;
+   if(automatic && (existing || !store.canAutoApprove(r)))throw new Error('This purchase needs owner review under the current rules.');
    const c=config();const supplier=store.get<Supplier>('suppliers',r.supplierId);const binding=supplier&&store.get<{merchant:string}>('testnet-supplier',c.owner+':'+supplier.id);if(!c.agent||!c.merchant||!supplier?.approved||(binding?.merchant||supplier.destination)!==c.merchant)throw new Error('Bind an approved supplier to the demo merchant first.');
    const velo=gas();
-   if(existing){if(!existing.identity)throw new Error('An earlier operation requires manual reconciliation; no duplicate submission was made.');const result=await velo.gas.getStatus(existing.identity);existing.result=result;existing.state=result.status;store.put('chain-operations',id,existing);return res.json(result.status==='succeeded'?await settleClaim(existing,r,res.locals.person.name):existing);}
-   if(!String(req.body.note||'').trim())throw new Error('Add an owner decision note.');const failed=store.checks(r).filter(v=>!v.pass);if(failed.length)throw new Error(failed.map(v=>v.detail).join(' '));if(!['needs_review','blocked'].includes(r.status))throw new Error('Request is not available for payment.');
+   if(existing){if(!existing.identity)throw new Error('An earlier operation requires manual reconciliation; no duplicate submission was made.');const result=await velo.gas.getStatus(existing.identity);existing.result=result;existing.state=result.status;store.put('chain-operations',id,existing);return result.status==='succeeded'?await settleClaim(existing,r,actor):existing;}
+   if(!note.trim())throw new Error('Add a decision note.');const failed=store.checks(r).filter(v=>!v.pass);if(failed.length)throw new Error(failed.map(v=>v.detail).join(' '));if(!['needs_review','blocked'].includes(r.status))throw new Error('Request is not available for payment.');
    const agent=getKey(keyName(c,'agent'));const check=await noir.checkPayment({deviceHash:c.deviceHash,agent:agent.publicKey(),asset,amount:BigInt(r.amount)});if(!check.ok)throw new Error(`Noir refused payment: ${check.reason}`);
    const nonce=BigInt(Math.max(Date.now(),Number(store.setting('chain-nonce')||0)+1));const op:any={id,nonce:String(nonce),state:'reserved',createdAt:new Date().toISOString()};
-   store.db.exec('BEGIN IMMEDIATE');try{const again=store.checks(r).filter(v=>!v.pass);if(again.length)throw new Error('Budget or access changed.');store.setSetting('chain-nonce',String(nonce));store.db.prepare("INSERT INTO commitments VALUES(?,?,?,'reserved')").run(r.id,r.projectId,r.amount);r.committedAt=new Date().toISOString();r.status='authorized';r.comment=String(req.body.note).slice(0,1500);store.saveRequest(r);store.put('chain-operations',id,op);store.db.exec('COMMIT');}catch(e){store.db.exec('ROLLBACK');throw e;}
+   store.db.exec('BEGIN IMMEDIATE');
+   try {
+    const current=store.request(id);
+    if(!current||!['needs_review','blocked'].includes(current.status)||store.get('chain-operations',id))throw new Error('This request is no longer available for payment.');
+    if(store.checks(current).some(check=>!check.pass))throw new Error('Budget or access changed.');
+    if(automatic&&!store.canAutoApprove(current))throw new Error('Automatic approval is no longer permitted.');
+    r=current;
+    store.setSetting('chain-nonce',String(nonce));
+    store.db.prepare("INSERT INTO commitments VALUES(?,?,?,'reserved')").run(r.id,r.projectId,r.amount);
+    r.committedAt=new Date().toISOString();
+    r.status='authorized';
+    r.comment=note.slice(0,1500);
+    store.saveRequest(r);
+    store.put('chain-operations',id,op);
+    store.event(automatic?'Assistant authorized Testnet payment':'Owner authorized Testnet payment',r.comment,actor,r.id,'chain');
+    store.db.exec('COMMIT');
+   } catch(error) {
+    store.db.exec('ROLLBACK');
+    throw error;
+   }
    try{
     const unsigned=await noir.prepare(agent.publicKey(),{kind:'authorize',deviceHash:c.deviceHash,merchant:c.merchant,asset,amount:BigInt(r.amount),nonce});const tx=TransactionBuilder.fromXDR(unsigned,Networks.TESTNET);if(!('source' in tx)||tx.source!==agent.publicKey())throw new Error('Unexpected agent transaction.');tx.sign(agent);op.transactionHash=tx.hash().toString('hex');store.put('chain-operations',id,op);
     const reservation=await velo.gas.sponsor(tx.toXDR(),{idempotencyKey:'allowance:'+id,correlationId:id});op.identity={requestId:reservation.requestId,transactionHash:reservation.transactionHash};op.state='sponsored';store.put('chain-operations',id,op);
     const result=await velo.gas.submit({...op.identity,transactionXdr:tx.toXDR()});op.result=result;op.state=result.status;store.put('chain-operations',id,op);
-    if(result.status!=='succeeded')return res.status(202).json(op);
-    res.json(await settleClaim(op,r,res.locals.person.name));
+    return result.status==='succeeded'?await settleClaim(op,r,actor):op;
    }catch(e){op.error=e instanceof Error?e.message:'Testnet operation failed.';op.state='needs_reconciliation';store.put('chain-operations',id,op);throw new Error(op.error+' The allowance reservation remains held; no automatic retry was made.');}
   }finally{busy=false;}
+ }
+ app.post('/api/requests/:id/testnet',auth,owner,async(req,res)=>{
+  if(busy)return res.status(409).json({error:'Another chain operation is running. Wait, then reconcile its status.'});
+  const op=await approveRequest(String(req.params.id),res.locals.person.name,String(req.body?.note||''));
+  res.status(op.state==='claimed'?200:202).json(op);
  });
- return { saveAgentSettings, setupStatus: safeStatus };
+ return { approveRequest, saveAgentSettings, setupStatus: safeStatus };
 }
