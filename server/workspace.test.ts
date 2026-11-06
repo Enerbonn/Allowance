@@ -56,6 +56,8 @@ test('private codes, owner-reviewed AI proposals, and member memory stay scoped'
     assert.deepEqual(reply.proposals,[]);
   }
   assert.deepEqual(store.requests(),recordsBefore);
+  answer = {scope:'workspace',reply:'I cannot verify the payment.',draft:null,proposals:[note]};
+  assert.deepEqual((await ask('Our supplier says the invoice was paid. Can you verify it?')).proposals,[]);
   answer={scope:'workspace',reply:'Save this private preference?',draft:null,proposals:[{type:'memory',targetId:'maya',summary:'Remember a work preference.',fields:{text:'Prefer accessible commercial font licenses.'}}]};const memory=await(await post('/assistant',{message:'Remember my work preference.'},member)).json();assert.equal((await post(`/proposals/${memory.proposals[0].id}/apply`,{},member)).status,200);assert.equal((await(await fetch(base+'/memory',{headers:{cookie:owner}})).json()).length,0);
   const reset=await post('/team/maya/code',{},owner);assert.equal(reset.status,200);assert.equal((await fetch(base+'/bootstrap',{headers:{cookie:member}})).status,401);
   for(let i=0;i<5;i++)assert.equal((await post('/session',{email:'maya@allowance.example',role:'member',code:'wrong-code'})).status,401);assert.equal((await post('/session',{email:'maya@allowance.example',role:'member',code:'wrong-code'})).status,429);

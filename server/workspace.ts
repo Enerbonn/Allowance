@@ -211,6 +211,7 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
         } catch { answer.draft=null; }
       }
       if(answer.draft?.evidenceUrl&&!z.url().refine(value=>new URL(value).protocol==='https:').safeParse(answer.draft.evidenceUrl).success)answer.draft.evidenceUrl='';
+      const noteRequested = /^(?:(?:please|i want (?:you |the assistant )?to|can you|could you|help me)\s+)?(?:remember\b|tandaan\b|make (?:a )?note\b|(?:save|add|i-save)\b[^.!?]*\b(?:note|memory)\b)/i.test(message);
       const proposals=[];
       for(const proposal of answer.proposals){
         if(!isOwner&&proposal.type!=='memory')continue;
@@ -219,7 +220,7 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
           try { memberBudget(proposal.fields.budget as string|null|undefined); memberBudget(proposal.fields.weeklyBudget as string|null|undefined); } catch { continue; }
         }
         if(proposal.type==='policy'&&!policyFields.safeParse(proposal.fields).success)continue;
-        if(proposal.type==='memory'&&(!memoryFields.safeParse(proposal.fields).success||(proposal.targetId!==p.id&&!(isOwner&&proposal.targetId==='workspace'))))continue;
+        if(proposal.type==='memory'&&(!noteRequested||!memoryFields.safeParse(proposal.fields).success||(proposal.targetId!==p.id&&!(isOwner&&proposal.targetId==='workspace'))))continue;
         if(Object.hasOwn(proposalFields,proposal.type)&&!proposalFields[proposal.type as keyof typeof proposalFields].safeParse(proposal.fields).success)continue;
         if(proposal.type==='agent'){
           if(!paymentSetup?.owner)continue;
