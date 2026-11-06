@@ -1,6 +1,6 @@
 import type {Express,RequestHandler} from 'express';
 import {NoirAgentClient,TESTNET,type NoirOperation} from '@noirx402/agent-sdk';
-import {Keypair,Networks,Asset,TransactionBuilder,xdr,StrKey,scValToNative} from '@stellar/stellar-sdk';
+import {Keypair,Networks,Asset,TransactionBuilder,xdr,StrKey,scValToNative,type rpc} from '@stellar/stellar-sdk';
 import {Velo,VeloError,type GasExecutionIdentity,type GasSubmitResult} from '@carts1024/velo-sdk';
 import {createHash,randomUUID} from 'node:crypto';
 import {existsSync,readFileSync,writeFileSync,mkdirSync} from 'node:fs';
@@ -22,8 +22,29 @@ export function matchesMerchantClaim(events: xdr.ContractEvent[], merchant: stri
     scValToNative(recipient)===merchant && scValToNative(body.data())===BigInt(amount);
  });
 }
-function settled(op: {state:string;result?:{status:string}}) {
- return op.state==='authorization_failed'||(op.state==='claimed'&&op.result?.status!=='claimed');
+function contractEvents(result: rpc.Api.GetSuccessfulTransactionResponse) {
+ const meta=result.resultMetaXdr;
+ const legacy=meta.switch()===3 ? meta.v3().sorobanMeta()?.events() ?? [] : [];
+ return [...result.events.contractEventsXdr.flat(),...legacy];
+}
+export function matchesAuthorizationReceipt(result:rpc.Api.GetTransactionResponse, expected:{innerHash:string;deviceHash:string;merchant:string;amount:number}) {
+ if(result.status!=='SUCCESS')return false;
+ const envelope=TransactionBuilder.fromXDR(result.envelopeXdr,Networks.TESTNET);
+ const transaction='innerTransaction' in envelope ? envelope.innerTransaction : envelope;
+ if(transaction.hash().toString('hex')!==expected.innerHash)return false;
+ return contractEvents(result).some(event=>{
+  const contract=event.contractId();
+  if(!Buffer.isBuffer(contract)||StrKey.encodeContract(contract)!==EVENT_CONTRACTS.paymentEscrow)return false;
+  const body=event.body().v0(),[name,device,merchant]=body.topics();
+  if(!name||!device||!merchant||scValToNative(name)!=='authorize')return false;
+  const deviceBytes=scValToNative(device);
+  return (Buffer.isBuffer(deviceBytes)||deviceBytes instanceof Uint8Array)&&
+    Buffer.from(deviceBytes).toString('hex')===expected.deviceHash&&scValToNative(merchant)===expected.merchant&&
+    scValToNative(body.data())===BigInt(expected.amount);
+ });
+}
+function settled(op: {state:string;result?:{status:string};authorizationProofHash?:string;claimHash?:string}) {
+ return op.state==='authorization_failed'||(op.state==='claimed'&&(op.result?.status!=='claimed'||!!(op.authorizationProofHash&&op.claimHash)));
 }
 function sponsorshipFailure(error: unknown) {
  if(!(error instanceof VeloError))return 'Check the Noir setup and Velo Gas Station settings.';
@@ -180,11 +201,7 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
    const merchant=getKey(keyName(c,'merchant'));const claimXdr=await noir.prepare(merchant.publicKey(),{kind:'claim',token:asset});const claimTx=TransactionBuilder.fromXDR(claimXdr,Networks.TESTNET);if(!('source' in claimTx)||claimTx.source!==c.merchant)throw new Error('Unexpected merchant transaction.');claimTx.sign(merchant);op.claimHash=claimTx.hash().toString('hex');op.state='claim_submitting';store.put('chain-operations',r.id,op);await checkpoint?.();await noir.submit(claimTx.toXDR());
   }
   const result=await (recovery.getTransaction?.(op.claimHash) ?? noir.server.getTransaction(op.claimHash));
-  if(result.status==='SUCCESS'){
-   const meta=result.resultMetaXdr;
-   const legacyEvents=meta.switch()===3 ? meta.v3().sorobanMeta()?.events() ?? [] : [];
-   if(matchesMerchantClaim([...result.events.contractEventsXdr.flat(),...legacyEvents],c.merchant,r.amount))return finish();
-  }
+  if(result.status==='SUCCESS'&&matchesMerchantClaim(contractEvents(result),c.merchant,r.amount))return finish();
   op.state=result.status==='FAILED'?'claim_failed':result.status==='SUCCESS'?'claim_needs_review':'claim_confirmation_pending';
   store.put('chain-operations',r.id,op);return op;
  }
@@ -201,11 +218,28 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   }catch(error){store.db.exec('ROLLBACK');throw error;}
   return op;
  }
+ async function readAuthorizationProof(op:any,r:SpendRequest) {
+  const c=config(),innerHash=op.transactionHash || op.identity?.transactionHash;
+  if(!/^[a-f0-9]{64}$/.test(innerHash||'')||innerHash!==op.identity?.transactionHash||!c.deviceHash||!c.merchant)return null;
+  const hashes=[...new Set<string>([op.result?.outerTransactionHash,innerHash].filter(v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v)))];
+  for(const hash of hashes){
+   try {
+    const receipt=await (recovery.getTransaction?.(hash) ?? noir.server.getTransaction(hash));
+    if(matchesAuthorizationReceipt(receipt,{innerHash,deviceHash:c.deviceHash,merchant:c.merchant,amount:r.amount}))return hash;
+   }catch { /* An unavailable ledger read cannot establish the result. */ }
+  }
+  return null;
+ }
  async function followPayment(op:any,r:SpendRequest,actor:string,result?:GasSubmitResult) {
   // Once Velo's success is saved, later checks can go straight to Stellar.
-  if(op.result?.status==='succeeded')return settleClaim(op,r,actor);
+  if(op.authorizationProofHash||op.result?.status==='succeeded')return settleClaim(op,r,actor);
   if(!op.identity)return op;
-  result ??= await (recovery.getGasStatus?.(op.identity) ?? gas().gas.getStatus(op.identity));
+  try { result ??= await (recovery.getGasStatus?.(op.identity) ?? gas().gas.getStatus(op.identity)); }
+  catch(error){
+   op.authorizationProofHash=await readAuthorizationProof(op,r);
+   if(!op.authorizationProofHash)throw error;
+   store.put('chain-operations',r.id,op);await checkpoint?.();return settleClaim(op,r,actor);
+  }
   op.result=result;
   // Velo also calls an in-progress sponsorship "claimed". Keep that state
   // distinct from a completed merchant claim.
@@ -216,6 +250,10 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   }
   store.put('chain-operations',r.id,op);
   if(result.status==='succeeded'){await checkpoint?.();return settleClaim(op,r,actor);}
+  if(result.status==='submitted'||result.status==='submission_unknown'||result.status==='claimed'){
+   op.authorizationProofHash=await readAuthorizationProof(op,r);
+   if(op.authorizationProofHash){store.put('chain-operations',r.id,op);await checkpoint?.();return settleClaim(op,r,actor);}
+  }
   return op;
  }
  app.get('/api/testnet',auth,owner,(_req,res)=>res.json(safeStatus()));
@@ -371,7 +409,7 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   if(r.status==='payment_failed')return {canCheck:false, label:'Payment failed', detail:op?.error || 'The authorization did not succeed. Your budget is no longer reserved.'};
   if(!op?.identity)return {canCheck:false,label:'Payment needs investigation',detail:'No Velo tracking ID was saved. The owner can compare the authorization hash in Connections with Velo’s receipt.'};
   if(op.state==='claim_failed'||op.state==='claim_needs_review')return {canCheck:false,label:'Recipient claim needs attention',detail:'The authorization succeeded, but Allowance could not confirm a claim for this exact amount. The budget remains reserved.'};
-  if(op.result?.status==='succeeded')return {canCheck:true,label:'Waiting for recipient claim',detail:'Velo confirmed authorization. Allowance is checking for the recipient’s Testnet receipt.'};
+  if(op.authorizationProofHash||op.result?.status==='succeeded')return {canCheck:true,label:'Waiting for recipient claim',detail:'The authorization is confirmed. Allowance is checking for the recipient’s Testnet receipt.'};
   return {canCheck:true,label:'Waiting for Velo confirmation',detail:'Approval is recorded. Allowance is checking the existing transaction before it can confirm payment.'};
  }
  app.post('/api/requests/:id/payment-status',auth,async(req,res)=>{

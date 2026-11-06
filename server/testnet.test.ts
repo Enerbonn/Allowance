@@ -5,7 +5,7 @@ import {Store} from './store.ts';
 import type {SpendRequest} from './domain.ts';
 import type {GasSubmitResult} from '@carts1024/velo-sdk';
 import {Account,Address,Asset,Keypair,Networks,Operation,TransactionBuilder,StrKey,nativeToScVal,xdr} from '@stellar/stellar-sdk';
-import {validateOwnerSetupSignature,EVENT_CONTRACTS,parseAgentSettings,matchesMerchantClaim,installTestnet} from './testnet.ts';
+import {validateOwnerSetupSignature,EVENT_CONTRACTS,parseAgentSettings,matchesMerchantClaim,matchesAuthorizationReceipt,installTestnet} from './testnet.ts';
 
 test('owner setup signatures bind the exact prepared transaction and Testnet',()=>{
  const owner=Keypair.random(),recipient=Keypair.random();
@@ -38,6 +38,67 @@ test('a successful claim must match the Noir escrow, recipient and exact purchas
  assert.equal(matchesMerchantClaim([event(EVENT_CONTRACTS.paymentEscrow,merchant,250000000n)],merchant,150000000),false);
  assert.equal(matchesMerchantClaim([event(EVENT_CONTRACTS.agentRegistry,merchant,150000000n)],merchant,150000000),false);
  assert.equal(matchesMerchantClaim([event(EVENT_CONTRACTS.paymentEscrow,Keypair.random().publicKey(),150000000n)],merchant,150000000),false);
+});
+
+test('Stellar can recover a submitted fee-bumped authorization only when the exact transaction and Noir event match',async()=>{
+ const source=Keypair.random(),merchant=Keypair.random(),sponsor=Keypair.random();
+ const amount=10000000,device=Buffer.alloc(32,7);
+ const inner=new TransactionBuilder(new Account(source.publicKey(),'1'),{fee:'100',networkPassphrase:Networks.TESTNET})
+  .addOperation(Operation.invokeHostFunction({
+   func:xdr.HostFunction.hostFunctionTypeInvokeContract(new xdr.InvokeContractArgs({
+    contractAddress:new Address(EVENT_CONTRACTS.paymentEscrow).toScAddress(),functionName:'authorize',args:[],
+   })),auth:[],
+  })).setTimeout(120).build();
+ inner.sign(source);
+ const outer=TransactionBuilder.buildFeeBumpTransaction(sponsor.publicKey(),'200',inner,Networks.TESTNET);
+ outer.sign(sponsor);
+ const authorization=new xdr.ContractEvent({
+  ext:new xdr.ExtensionPoint(0),contractId:StrKey.decodeContract(EVENT_CONTRACTS.paymentEscrow) as unknown as xdr.Hash,
+  type:xdr.ContractEventType.contract(),body:new xdr.ContractEventBody(0,new xdr.ContractEventV0({
+   topics:[nativeToScVal('authorize',{type:'symbol'}),nativeToScVal(device,{type:'bytes'}),new Address(merchant.publicKey()).toScVal()],
+   data:nativeToScVal(BigInt(amount),{type:'i128'}),
+  })),
+ });
+ const response={status:'SUCCESS',envelopeXdr:outer.toEnvelope(),resultMetaXdr:{switch:()=>4},
+  events:{contractEventsXdr:[[authorization]]}} as unknown as Parameters<typeof matchesAuthorizationReceipt>[0];
+ const expected={innerHash:inner.hash().toString('hex'),deviceHash:device.toString('hex'),merchant:merchant.publicKey(),amount};
+ assert.equal(matchesAuthorizationReceipt(response,expected),true);
+ assert.equal(matchesAuthorizationReceipt(response,{...expected,innerHash:outer.hash().toString('hex')}),false);
+ assert.equal(matchesAuthorizationReceipt(response,{...expected,deviceHash:'0'.repeat(64)}),false);
+ assert.equal(matchesAuthorizationReceipt(response,{...expected,merchant:source.publicKey()}),false);
+ assert.equal(matchesAuthorizationReceipt(response,{...expected,amount:amount+1}),false);
+ const store=new Store(':memory:');
+ const request:SpendRequest={...store.request('REQ-1044')!,id:'STELLAR-RECOVERY',idempotencyKey:'STELLAR-RECOVERY',mode:'testnet',status:'authorized',receipt:null,amount};
+ const identity={requestId:'sponsor-id',transactionHash:expected.innerHash};
+ const outerHash=outer.hash().toString('hex'),claimHash='c'.repeat(64);
+ store.put('testnet','config',{owner:source.publicKey(),merchant:expected.merchant,deviceHash:expected.deviceHash});
+ store.create(request);
+ store.db.prepare("INSERT INTO commitments VALUES(?,?,?,'reserved')").run(request.id,request.projectId,request.amount);
+ store.put('chain-operations',request.id,{id:request.id,state:'submitted',identity,transactionHash:expected.innerHash,claimHash});
+ const lookups:string[]=[];
+ const stub=(_req:any,_res:any,next:any)=>next();
+ const handler=installTestnet(express(),store,stub,stub,undefined,{
+  getGasStatus:async id=>{assert.deepEqual(id,identity);return {
+   ...identity,object:'gas_submit_result',status:'submitted',outerTransactionHash:outerHash,reservedStroops:'100',
+   actualFeeStroops:null,expiresAt:new Date().toISOString(),reconciliationRequired:true,
+  };},
+  getTransaction:async hash=>{
+   lookups.push(hash);
+   if(hash===outerHash)return response;
+   assert.equal(hash,claimHash);
+   return {...response,events:{contractEventsXdr:[[event(EVENT_CONTRACTS.paymentEscrow,expected.merchant,BigInt(amount))]]}} as unknown as typeof response;
+  },
+ });
+ try{
+  const paid=await handler.approveRequest(request.id,'Test recovery','');
+  assert.equal(paid.result.status,'submitted');
+  assert.equal(paid.authorizationProofHash,outerHash);
+  assert.equal(store.request(request.id)?.status,'paid');
+  assert.equal(store.request(request.id)?.receipt,claimHash);
+  await handler.approveRequest(request.id,'Test replay','');
+  assert.deepEqual(lookups,[outerHash,claimHash]);
+  assert.equal(store.events().filter(e=>e.requestId===request.id&&e.title==='Testnet payment claimed').length,1);
+ }finally{store.close();}
 });
 
 test('existing Velo handoff recovers once, and only a verified Noir claim settles the budget',async()=>{

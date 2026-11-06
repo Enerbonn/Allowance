@@ -114,7 +114,7 @@ Before spending, the backend checks membership, assignment, supplier, category, 
 
 - **Connections → steps 2–4** includes setup instructions. Noir's device registry links the setup to the owner wallet, the agent registry records spending authority, and payment escrow holds and pays out test XLM. The sponsored purchase calls payment escrow, so that is the contract to allow in Velo Gas Station.
 - **Spending policy → Supplier directory** accepts fictional demo suppliers and owner-approved alternate quote websites. The hostname is checked against the selected supplier's record without visiting the website. For a test purchase, link that supplier to the demo recipient in Connections.
-- **Requests** distinguishes an approval from a completed payment. With Allowance open, it checks pending Velo handoffs by their existing tracking ID. It records payment only when Stellar confirms the exact Noir claim to the demo recipient. Uncertain handoffs keep their budget reservation; a confirmed failed authorization releases it.
+- **Requests** distinguishes an approval from a completed payment. With Allowance open, it checks pending Velo handoffs by their existing tracking ID. If Velo still says submitted, Allowance can verify the same authorization directly on Stellar. It records payment only when Stellar confirms the exact Noir claim to the demo recipient. Uncertain handoffs keep their budget reservation; a confirmed failed authorization releases it.
 
 ## AI credentials and APIs
 

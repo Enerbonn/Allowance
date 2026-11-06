@@ -34,7 +34,7 @@ export type TestnetStatus = {
   agent?: string;
   merchant?: string;
   checks: { checkedAt?: string; contracts: {name: string; exists: boolean}[]; error?: string; deviceOwner?: string; escrow?: string; policy?: {agent: string; asset: string; maxAmount: string; expiresAt: string | null} } | null;
-  operations: { id: string; state: string; error?: string; transactionHash?: string; claimHash?: string; identity?: {requestId:string}; result?: {status:string;outerTransactionHash?:string|null} }[];
+  operations: { id: string; state: string; error?: string; transactionHash?: string; authorizationProofHash?: string; claimHash?: string; identity?: {requestId:string}; result?: {status:string;outerTransactionHash?:string|null} }[];
 };
 type Supplier = { id: string; name: string; approved: boolean };
 const paymentOperationLabels: Record<string,string> = {
@@ -355,10 +355,10 @@ export function TestnetPanel({ data, focus, addSupplier }: { data: { suppliers: 
     </ol>
     <div role="status">{busy && <div className="toast"><LoaderCircle size={16} className="spin" aria-hidden="true"/><span>In progress: {busy}…</span></div>}</div>
     {state.operations.length > 0 && <div className="surface-list">{state.operations.map(op => <div className="memory-note" key={op.id}><div>
-      <strong>{op.id}: {paymentOperationLabels[op.state==='claimed'&&op.result?.status==='claimed'?'velo_claimed':op.state] || 'Check payment status'}</strong>
+      <strong>{op.id}: {paymentOperationLabels[op.state==='claimed'&&op.result?.status==='claimed'&&!op.authorizationProofHash?'velo_claimed':op.state] || 'Check payment status'}</strong>
       {op.error && <p>{op.error}</p>}
       <small className="payment-contract-address">{op.identity && <>Velo tracking ID: {op.identity.requestId}<br/></>}
-        Authorization hash: {op.result?.outerTransactionHash || op.transactionHash || 'Not available'}<br/>
+        Authorization hash: {op.authorizationProofHash || op.result?.outerTransactionHash || op.transactionHash || 'Not available'}<br/>
         Recipient claim hash: {op.claimHash || 'Not available'}</small>
     </div></div>)}</div>}
   </section>;
