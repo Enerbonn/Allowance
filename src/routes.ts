@@ -1,7 +1,7 @@
 const paths = {
   Overview: '/',
   Requests: '/requests',
-  'Spend assistant': '/assistant',
+  Assistant: '/assistant',
   Projects: '/projects',
   Team: '/team',
   'Spending policy': '/spending-policy',
@@ -25,8 +25,11 @@ export function requestPath(requestId: string, projectId?: string) {
   return `${base}/${encodeURIComponent(requestId)}`;
 }
 
-export function readRoute(pathname: string): { page: Page; projectId?: string; requestId?: string } {
+export function readRoute(pathname: string, search = ''): { page: Page; projectId?: string; requestId?: string; setupAssistant?: boolean } {
   const path = pathname.replace(/\/+$/, '') || '/';
+  if (path === paths.Assistant) {
+    return { page: 'Assistant', setupAssistant: new URLSearchParams(search).get('mode') === 'setup' };
+  }
   const project = /^\/projects\/([^/]+)\/requests(?:\/([^/]+))?$/.exec(path);
   const request = /^\/requests\/([^/]+)$/.exec(path);
   try {

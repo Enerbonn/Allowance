@@ -57,7 +57,7 @@ export function OwnerSetup({ data, open, ask }: { data: SetupData; open: (action
       <div><h2 id="owner-setup-title">Set up your workspace</h2><p>Complete the workspace steps before inviting your team to spend. Set up Testnet separately when you want to send test payments.</p></div>
       <div className="setup-step-actions">
       {nextStep && <button className="primary-btn" onClick={() => open(nextStep.action)}>Continue setup manually</button>}
-      <button className="secondary-btn" disabled={!data.ai.provider} onClick={() => ask('Walk me through owner setup. Review my workspace and Testnet progress, then guide me through the first missing step.')}><Sparkles size={16} aria-hidden="true"/>Set up with assistant</button>
+      <button className="secondary-btn" disabled={!data.ai.provider} onClick={() => ask('Walk me through owner setup. Review my workspace and Testnet progress, then guide me through the first missing step.')}><Sparkles size={16} aria-hidden="true"/>Set up with Assistant</button>
       </div>
     </div>
     {!data.ai.provider && <p className="owner-setup-note">Connect an assistant provider in Connections to use guided setup.</p>}
