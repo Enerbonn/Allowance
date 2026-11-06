@@ -40,7 +40,7 @@ test('clear declines close the request while uncertain or stale assessments go t
   const store = new Store(':memory:');
   try {
     const decline = {
-      recommendation: 'decline' as const, summary: 'This is a personal purchase.',
+      recommendation: 'decline' as const, outOfScope: true, summary: 'This is a personal purchase.',
       reasoning: ['The request serves personal use.'], missingInformation: [],
       provider: 'Relmio via local n8n',
     };
@@ -110,7 +110,14 @@ test('supplier category and quote host constrain automatic payments', () => {
   const mismatchedQuote = { ...candidate(store), evidenceUrl: 'https://framekit.example.unrelated.example/quote', status: 'analyzing' } as SpendRequest;
   store.create(misclassified);
   store.create(mismatchedQuote);
-  assert.equal(store.setReview(misclassified.id, reviewed).status, 'blocked');
+  const categoryReview = store.setReview(misclassified.id, { ...reviewed, recommendation:'decline', outOfScope:false, summary:'The supplier category differs.' });
+  assert.equal(categoryReview.status, 'needs_review');
+  assert.equal(categoryReview.ai?.recommendation, 'review');
+  assert.match(categoryReview.reasons.join(' '), /owner needs to review the supplier/);
+  assert.ok(store.checks(categoryReview).every(check => check.pass));
+  store.put('policy', 'main', { ...store.policy(), autoTestnet: true });
+  assert.equal(store.canAutoApprove({ ...categoryReview, mode:'testnet', ai:reviewed }), false);
+  assert.equal(store.pay(categoryReview.id, 'Owner').status, 'paid');
   assert.equal(store.setReview(mismatchedQuote.id, reviewed).status, 'needs_review');
   const configured = { ...store.request(mismatchedQuote.id)!, mode: 'testnet' as const, evidenceUrl: 'https://fictional-checkout.example/quote' };
   store.put('policy', 'main', { ...store.policy(), autoTestnet: true });
@@ -120,7 +127,7 @@ test('supplier category and quote host constrain automatic payments', () => {
   assert.equal(store.canAutoApprove(configured), true);
   assert.equal(store.canAutoApprove({...configured,evidenceUrl:'https://fictional-checkout.example.evil.example/quote'}),false);
   assert.equal(store.canAutoApprove({...configured,evidenceUrl:'https://fictional-checkout.example@evil.example/quote'}),false);
-  assert.equal(store.committed('launch'), units('28'));
+  assert.equal(store.committed('launch'), units('48'));
   store.close();
 });
 
@@ -147,11 +154,11 @@ test('unlisted supplier trust and missing references never bypass owner policy',
     store.create(unknown);
     const reviewed = store.setReview(unknown.id,approved);
     assert.equal(reviewed.status,'needs_review');
-    assert.match(reviewed.reasons.join(' '),/needs owner review/);
+    assert.match(reviewed.reasons.join(' '),/owner needs to review the supplier/);
     assert.ok(store.checks(reviewed).every(check=>check.pass));
     const unrelated = {...candidate(store,'5'),supplierId:'',category:'Equipment',status:'analyzing' as const};
     store.create(unrelated);
-    const declined = store.setReview(unrelated.id,{...approved,recommendation:'decline',summary:'A car does not support the assigned editing work.'});
+    const declined = store.setReview(unrelated.id,{...approved,recommendation:'decline',outOfScope:true,summary:'A car does not support the assigned editing work.'});
     assert.equal(declined.status,'declined');
     assert.match(declined.reasons.join(' '),/does not support/);
     store.put('policy','main',{...store.policy(),requireEvidence:true});

@@ -111,14 +111,7 @@ export class Store {
     }
     return 'owner-review';
   }
-  private supplierCategoryChecks(r: SpendRequest) {
-    const supplier = this.get<Supplier>('suppliers', r.supplierId);
-    return supplier?.approved ? [{
-      label: 'Supplier category', pass: supplier.category === r.category,
-      detail: 'Choose a purchase category that matches the selected supplier.',
-    }] : [];
-  }
-  checks(r: SpendRequest) { const p = this.get<Person>('people', r.requesterId)!; const weekly = p.weeklyBudget === undefined ? undefined : Math.max(0, p.weeklyBudget-this.weeklySpent(p.id,r.id)); return [...policyChecks(r, p, this.get<Task>('tasks', r.taskId), this.get<Project>('projects', r.projectId), this.policy(), this.committed(r.projectId, r.id)), ...this.supplierCategoryChecks(r), {label:'Member allowance',pass:p.budget === undefined || this.memberSpent(p.id,r.id)+r.amount<=p.budget,detail:p.budget === undefined ? 'Workspace limits apply.' : `${money(Math.max(0,p.budget-this.memberSpent(p.id,r.id)))} XLM of this member’s total allowance remains.`}, {label:'Member weekly cap',pass:weekly === undefined || r.amount <= weekly,detail:weekly === undefined ? 'No separate weekly cap.' : `${money(weekly)} XLM remains under the member’s weekly cap (Manila time).`}, {label:'Member purchasing categories',pass:!p.allowedCategories || p.allowedCategories.includes(r.category),detail:'The member’s permitted categories also apply.'}]; }
+  checks(r: SpendRequest) { const p = this.get<Person>('people', r.requesterId)!; const weekly = p.weeklyBudget === undefined ? undefined : Math.max(0, p.weeklyBudget-this.weeklySpent(p.id,r.id)); return [...policyChecks(r, p, this.get<Task>('tasks', r.taskId), this.get<Project>('projects', r.projectId), this.policy(), this.committed(r.projectId, r.id)), {label:'Member allowance',pass:p.budget === undefined || this.memberSpent(p.id,r.id)+r.amount<=p.budget,detail:p.budget === undefined ? 'Workspace limits apply.' : `${money(Math.max(0,p.budget-this.memberSpent(p.id,r.id)))} XLM of this member’s total allowance remains.`}, {label:'Member weekly cap',pass:weekly === undefined || r.amount <= weekly,detail:weekly === undefined ? 'No separate weekly cap.' : `${money(weekly)} XLM remains under the member’s weekly cap (Manila time).`}, {label:'Member purchasing categories',pass:!p.allowedCategories || p.allowedCategories.includes(r.category),detail:'The member’s permitted categories also apply.'}]; }
   create(r: SpendRequest) {
     const prior = this.db.prepare('SELECT data FROM requests WHERE idempotency=?').get(r.idempotencyKey) as { data: string } | undefined;
     if (prior) { const old = JSON.parse(prior.data) as SpendRequest; if (old.requesterId !== r.requesterId) throw new Error('Request key belongs to another member.'); return { request: old, duplicate: true }; }
@@ -155,6 +148,9 @@ export class Store {
   setReview(id: string, ai: Review) {
     const r = this.request(id)!;
     if (r.status !== 'analyzing') return r;
+    if (ai.recommendation === 'decline' && ai.outOfScope !== true) {
+      ai = { ...ai, recommendation: 'review', summary: 'The owner needs to review this request.' };
+    }
     r.ai = ai;
     const failed = this.checks(r).filter(check => !check.pass);
     r.reasons = failed.map(check => check.detail);
@@ -166,7 +162,7 @@ export class Store {
       r.reasons.push(ai.summary);
     } else if (r.status === 'needs_review') {
       if (this.supplierTrust(r) === 'owner-review') {
-        r.reasons.push('This supplier or website needs owner review for this request.');
+        r.reasons.push('The owner needs to review the supplier, its purchase category, or the supporting website.');
       }
       if (this.policy().requireEvidence && !r.evidenceUrl && r.evidenceId) {
         r.reasons.push('The owner needs to check the attached evidence.');

@@ -33,7 +33,7 @@ export type Person = { id: string; name: string; role: 'owner' | 'member'; title
 export type Project = { id: string; name: string; description: string; budget: number; active: boolean };
 export type Task = { id: string; projectId: string; assigneeId: string; title: string; description: string; active: boolean };
 export type Supplier = { id: string; name: string; category: string; domain: string; quoteHosts?: string[]; approved: boolean; destination: string };
-export type Review = { recommendation: 'approve' | 'review' | 'decline'; summary: string; reasoning: string[]; missingInformation: string[]; model?: string; provider: string };
+export type Review = { recommendation: 'approve' | 'review' | 'decline'; outOfScope?: boolean; summary: string; reasoning: string[]; missingInformation: string[]; model?: string; provider: string };
 export type SpendRequest = { id: string; title: string; taskId: string; projectId: string; requesterId: string; supplierId: string; supplierName?: string; category: string; amount: number; purpose: string; evidenceUrl: string; status: 'analyzing' | 'needs_review' | 'blocked' | 'authorized' | 'paid' | 'payment_failed' | 'declined' | 'cancelled'; createdAt: string; updatedAt: string; policyVersion: number; reasons: string[]; ai: Review | null; mode: 'simulated' | 'testnet'; receipt: string | null; idempotencyKey: string; comment: string; evidenceId?: string; profileVersion?: number; committedAt?: string; };
 export type Event = { id: string; requestId: string | null; actor: string; title: string; detail: string; createdAt: string; kind: string };
 export type Check = { label: string; pass: boolean; detail: string };
@@ -59,6 +59,6 @@ export const RELMIO_PROVIDER = 'Relmio via local n8n';
 export const GEMINI_PROVIDER = 'Google Gemini';
 
 export function validateReview(input: unknown, provider = RELMIO_PROVIDER): Review {
-  const schema = z.object({ recommendation: z.enum(['approve', 'review', 'decline']), summary: z.string().min(1).max(1200), reasoning: z.array(z.string().max(800)).max(8), missingInformation: z.array(z.string().max(500)).max(8), model: z.string().max(120).optional() });
+  const schema = z.object({ recommendation: z.enum(['approve', 'review', 'decline']), outOfScope: z.boolean().nullish().transform(value => value ?? undefined), summary: z.string().min(1).max(1200), reasoning: z.array(z.string().max(800)).max(8), missingInformation: z.array(z.string().max(500)).max(8), model: z.string().max(120).optional() });
   return { ...schema.parse(input), provider };
 }
