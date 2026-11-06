@@ -205,6 +205,12 @@ test('owner can switch Stellar wallets and keep each wallet’s Testnet setup', 
     assert.equal(next.gasKeyStored, false);
     assert.equal(next.checks, null);
 
+    const terms = { label: 'Wallet-specific agent', maxAmount: '12.5', expiresAt: null };
+    const savedTerms = await post('/testnet/agent-settings', { address: second, settings: terms }, cookie);
+    assert.equal(savedTerms.status, 200);
+    assert.deepEqual((await savedTerms.json()).agentSettings, terms);
+    assert.equal((await post('/testnet/agent-settings', { address: first, settings: terms }, cookie)).status, 400);
+
     const linked = await post('/testnet/wallet', { address: second, projectId: 'test-project' }, cookie);
     assert.equal(linked.status, 200);
     assert.equal((await linked.json()).projectId, 'test-project');
@@ -215,6 +221,7 @@ test('owner can switch Stellar wallets and keep each wallet’s Testnet setup', 
     store.put('chain-operations', 'pending', { state: 'claimed' });
     const restored = await (await post('/testnet/wallet', { address: first }, cookie)).json();
     assert.equal(restored.agent, demoAgent);
+    assert.equal(restored.agentSettings, null);
     assert.equal(restored.checks.escrow, '500000000');
     assert.equal((await (await post('/testnet/wallet', { address: second }, cookie)).json()).projectId, 'test-project');
     assert.equal(store.people().length, 1);

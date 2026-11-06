@@ -1,7 +1,8 @@
+import { createSetupRecord, isSetupKind } from './setup.ts';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { randomUUID } from 'node:crypto';
 import { Store } from './store.ts';
-import { categories, emailSchema, requestSchema, policySchema, units, offlineReview, validateReview, money, type Person, type Policy, type SpendRequest, type Task } from './domain.ts';
+import { categories, requestSchema, policySchema, units, offlineReview, validateReview, money, type Person, type Policy, type SpendRequest, type Task } from './domain.ts';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { resolve } from 'node:path';
@@ -67,8 +68,8 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
       store.setReview(r.id, offlineReview());
     }
   }
-  installWorkspace(app, store, { auth, owner, sessionPerson: person, callAI: ai.call, connected: aiConnected, failed: aiFailed });
-  installTestnet(app,store,auth,owner);
+  const testnet = installTestnet(app,store,auth,owner);
+  installWorkspace(app, store, { auth, owner, sessionPerson: person, callAI: ai.call, connected: aiConnected, failed: aiFailed, testnet });
   app.get('/api/health', (_req, res) => res.json({ ok: true, app: 'Allowance', paymentMode: 'simulated' }));
   app.delete('/api/session', auth, (req, res) => { const p = req.headers.cookie?.match(/allowance_session=([^;]+)/)?.[1]; if (p) store.db.prepare('DELETE FROM sessions WHERE token=?').run(p); res.clearCookie('allowance_session', { httpOnly:true, secure:!!publicOrigin, sameSite:'strict' }); res.json({ ok: true }); });
   app.post('/api/evidence', auth, (req, res) => {
@@ -84,7 +85,7 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
     const p = res.locals.person as Person; const requests = store.requests().filter(r => p.role === 'owner' || r.requesterId === p.id);
     const tasks = store.tasks().filter(t => p.role === 'owner' || t.assigneeId === p.id);
     const projectIds = new Set(tasks.map(t => t.projectId));
-    res.json({ messages: store.list<any>('chat').filter(m => m.personId === p.id).sort((a,b) => a.createdAt.localeCompare(b.createdAt)).slice(-40), person: publicMember(store,p), people: p.role === 'owner' ? store.people().map(x=>publicMember(store,x)) : [publicMember(store,p)], projects: store.projects().filter(pr => p.role === 'owner' || projectIds.has(pr.id)).map(pr => ({ ...pr, committed: store.committed(pr.id) })), tasks, suppliers: store.suppliers(), policy: store.policy(), requests: requests.map(r => ({ ...r, checks: store.checks(r) })), events: store.events().filter(e => p.role === 'owner' || (e.requestId && requests.some(r => r.id === e.requestId))), categories, ai: aiState, integrations: { payments: 'simulated', wallet: false, velo: false, noir: false, n8nUrl: 'http://localhost:5679', sampleWorkspace: store.setting('workspace-kind') !== 'blank' } });
+    res.json({ messages: store.list<any>('chat').filter(m => m.personId === p.id).sort((a,b) => a.createdAt.localeCompare(b.createdAt)).slice(-40).map(message => ({ ...message, proposals: message.proposals?.map((proposal: { id: string }) => store.get('proposals', proposal.id) || proposal) })), person: publicMember(store,p), people: p.role === 'owner' ? store.people().map(x=>publicMember(store,x)) : [publicMember(store,p)], projects: store.projects().filter(pr => p.role === 'owner' || projectIds.has(pr.id)).map(pr => ({ ...pr, committed: store.committed(pr.id) })), tasks, suppliers: store.suppliers(), policy: store.policy(), requests: requests.map(r => ({ ...r, checks: store.checks(r) })), events: store.events().filter(e => p.role === 'owner' || (e.requestId && requests.some(r => r.id === e.requestId))), categories, ai: aiState, integrations: { payments: 'simulated', wallet: false, velo: false, noir: false, n8nUrl: 'http://localhost:5679', sampleWorkspace: store.setting('workspace-kind') !== 'blank' } });
   });
   app.post('/api/requests', auth, (req, res) => {
     const input = requestSchema.parse(req.body); const p = res.locals.person as Person;
@@ -112,14 +113,12 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
   });
   app.post('/api/team/:id/toggle', auth, owner, (req, res) => { const p = store.get<Person>('people', String(req.params.id)); if (!p || p.role === 'owner') return res.status(400).json({ error: 'Choose a team member.' }); p.active = !p.active; store.put('people', p.id, p); store.event(p.active ? 'Member access restored' : 'Member access paused', p.name, res.locals.person.name, null, 'policy'); res.json(p); });
   app.post('/api/setup/:kind', auth, owner, (req, res) => {
-    const kind = String(req.params.kind), id = randomUUID(); let record: unknown;
-    if (kind === 'people') { const v = z.object({ name: z.string().trim().min(2).max(80), title: z.string().trim().min(2).max(100), email: emailSchema }).parse(req.body); if(store.people().some(p=>p.email===v.email))return res.status(409).json({error:'That email is already assigned in this workspace.'}); record = { ...v, id, role: 'member', initials: v.name.split(/\s+/).map(s => s[0]).slice(0, 2).join('').toUpperCase(), active: true }; }
-    else if (kind === 'projects') { const v = z.object({ name: z.string().trim().min(3).max(100), description: z.string().trim().min(5).max(600), budget: z.string() }).parse(req.body); record = { ...v, id, budget: units(v.budget), active: true }; }
-    else if (kind === 'tasks') { const v = z.object({ title: z.string().trim().min(3).max(120), description: z.string().trim().min(10).max(1200), projectId: z.string(), assigneeId: z.string() }).parse(req.body); if (!store.projects().some(p => p.id === v.projectId && p.active) || !store.people().some(p => p.id === v.assigneeId && p.active && p.role === 'member')) return res.status(400).json({ error: 'Choose an active project and team member.' }); record = { ...v, id, active: true }; }
-    else if (kind === 'suppliers') { const v = z.object({ name: z.string().trim().min(2).max(100), domain: z.string().trim().regex(/^[a-z0-9.-]+\.[a-z]{2,}$/i), category: z.enum(categories), approved: z.boolean() }).parse(req.body); record = { ...v, id, destination: 'Demo merchant record; wallet not connected' }; }
-    else return res.status(404).json({ error: 'Setup record type not found.' });
-    if (store.list(kind).length >= 200) return res.status(400).json({ error: 'This local prototype supports up to 200 records of each type.' });
-    store.put(kind, id, record); store.event('Workspace setup updated', `Added ${kind} record. No account invitation, supplier message, or payment was sent.`, res.locals.person.name, null, 'policy'); res.status(201).json(record);
+    const kind = String(req.params.kind);
+    if (!isSetupKind(kind)) return res.status(404).json({ error: 'Setup record type not found.' });
+    if (kind === 'people' && typeof req.body.email === 'string' && store.people().some(p => p.email === req.body.email.trim().toLowerCase())) {
+      return res.status(409).json({ error: 'That email is already assigned in this workspace.' });
+    }
+    res.status(201).json(createSetupRecord(store, kind, req.body, res.locals.person.name));
   });
   app.post('/api/ai/test', auth, owner, async (_req, res) => {
     try {

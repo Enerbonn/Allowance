@@ -12,3 +12,29 @@
 .role-option>span{display:grid;gap:4px;flex:1}
 .role-option small{font-weight:500;color:var(--slate)}
 .role-back{align-self:flex-start;min-height:44px}
+
+.owner-setup{margin:0 0 24px;padding:20px;border:1px solid var(--border);border-radius:14px;background:#fff}
+.owner-setup-heading,.setup-group-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.owner-setup-heading p,.setup-group p,.owner-setup-note{font-size:13px;color:var(--slate);margin:4px 0}
+.owner-setup-heading button,.setup-step-actions button{min-height:44px}
+.setup-group{margin-top:16px}
+.setup-group-heading span,.setup-group h4 small{font-size:12px;color:var(--slate)}
+.setup-group progress{width:100%;height:7px;accent-color:var(--emerald);margin:7px 0 4px}
+.setup-group ol{list-style:none;padding:0;margin:0}
+.setup-group li{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)}
+.setup-group h4{font-size:14px;margin:0}
+.setup-group h4 small{margin-left:6px;font-weight:500}
+.setup-step-icon{display:grid;place-items:center;color:var(--slate)}
+.setup-step-icon.complete{color:var(--emerald)}
+.setup-step-actions{display:flex;gap:12px;flex-wrap:wrap}
+@media(max-width:620px){.owner-setup{padding:14px}.setup-group li{grid-template-columns:22px minmax(0,1fr)}.setup-step-actions{grid-column:2}.setup-step-actions button{min-height:44px}}
+.agent-terms{display:grid;gap:10px;max-width:480px;margin-top:14px}
+.agent-terms>label{display:grid;gap:5px;font-size:13px}
+.agent-terms>label.agent-option{display:flex;align-items:center;gap:8px;min-height:40px}
+.agent-terms input:not([type=checkbox]){padding:10px;border:1px solid var(--border);border-radius:7px;max-width:100%;min-width:0}
+.agent-terms button{justify-self:start;min-height:44px}
+.testnet-steps li{scroll-margin-top:85px}
+.assistant-setup-links{display:flex;flex-wrap:wrap;gap:14px;padding:0 16px;border-bottom:1px solid var(--border)}
+.assistant-setup-links button{min-height:44px}
+.proposal-card label{display:grid;gap:6px;font-size:13px;margin:8px 0}
+.proposal-card label input{border:1px solid var(--border);border-radius:7px;padding:9px;min-width:0}

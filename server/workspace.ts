@@ -3,14 +3,24 @@ import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypt
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { redact, requestsOverride, sanitize } from './assistant-safety.ts';
+import { createSetupRecord, memberBudget, memberProfileFields, setupSchemas } from './setup.ts';
+import { agentSettingsSchema, parseAgentSettings, type installTestnet } from './testnet.ts';
 import { Store } from './store.ts';
 import { categories, emailSchema, units, money, type Person } from './domain.ts';
 
 const instructions = readFileSync(new URL('./agent-instructions.md', import.meta.url), 'utf8');
-const profileFields = z.object({name:z.string().trim().min(2).max(80).optional(),title:z.string().trim().min(2).max(100).optional(),description:z.string().max(3000).optional(),budget:z.string().nullable().optional(),allowedCategories:z.array(z.enum(categories)).min(1).optional()}).strict();
-const policyFields = z.object({description:z.string().max(4000).optional(),perRequest:z.string().optional(),autoLimit:z.string().optional(),projectLimit:z.string().optional(),allowedCategories:z.array(z.enum(categories)).min(1).optional()}).strict();
+const profileFields = memberProfileFields.partial();
+const recordKinds = { member: 'people', project: 'projects', task: 'tasks', supplier: 'suppliers' } as const;
+const proposalFields = {
+  member: memberProfileFields,
+  project: setupSchemas.projects,
+  task: setupSchemas.tasks,
+  supplier: setupSchemas.suppliers,
+  agent: agentSettingsSchema,
+};
+const policyFields = z.object({requireEvidence:z.boolean().optional(),description:z.string().max(4000).optional(),perRequest:z.string().optional(),autoLimit:z.string().optional(),projectLimit:z.string().optional(),allowedCategories:z.array(z.enum(categories)).min(1).optional()}).strict();
 const memoryFields = z.object({text:z.string().trim().min(3).max(2000)}).strict();
-const proposalSchema = z.object({type:z.enum(['profile','policy','memory']),targetId:z.string().max(100),summary:z.string().max(1000),fields:z.record(z.string(),z.unknown())});
+const proposalSchema = z.object({type:z.enum(['profile','policy','memory','member','project','task','supplier','agent']),targetId:z.string().max(100),summary:z.string().max(1000),fields:z.record(z.string(),z.unknown())});
 const draftSchema = z.object({title:z.string().max(120),taskId:z.string(),supplierId:z.string(),category:z.enum(categories),amount:z.string().max(30),purpose:z.string().max(3000),evidenceUrl:z.string().max(2000).default('')});
 export function setAccessCode(store:Store,id:string,code:string) {
   if (code.length<8 || code.length>128) throw new Error('Use a private code of 8 to 128 characters.');
@@ -28,7 +38,7 @@ export function assistantMember(store:Store,p:Person) {
   return profile;
 }
 
-export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;owner:RequestHandler;sessionPerson:(req:Request)=>Person|undefined;callAI:(body:Record<string,unknown>)=>Promise<any>;connected:(model?:string)=>void;failed:(error:unknown)=>void}) {
+export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;owner:RequestHandler;sessionPerson:(req:Request)=>Person|undefined;callAI:(body:Record<string,unknown>)=>Promise<any>;connected:(model?:string)=>void;failed:(error:unknown)=>void;testnet:ReturnType<typeof installTestnet>}) {
   // One-time migration removes the old identity-only demo sessions.
   if (!store.setting('access-v2')) {store.db.prepare('DELETE FROM sessions').run();store.setSetting('access-v2','enabled');}
   const workspaceOwner=store.get<Person>('people','owner');if(workspaceOwner?.title==='Studio owner'){workspaceOwner.title='Workspace owner';store.put('people','owner',workspaceOwner);}
@@ -111,7 +121,7 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
   });
   app.put('/api/team/:id/profile',o.auth,o.owner,(req,res)=>{
     const id=String(req.params.id);const p=store.get<Person>('people',id);if(!p||p.role==='owner')return res.status(400).json({error:'Choose a team member.'});
-    const fields=profileFields.extend({email:emailSchema.optional()}).parse(req.body);if(fields.email)uniqueEmail(fields.email,p.id);const emailChanged=!!fields.email&&fields.email!==p.email;const next={...p,...fields,budget:fields.budget===undefined?p.budget:(fields.budget===null?undefined:/^0(?:\.0{1,7})?$/.test(fields.budget)?0:units(fields.budget)),profileVersion:(p.profileVersion||0)+1};
+    const fields=profileFields.extend({email:emailSchema.optional()}).parse(req.body);if(fields.email)uniqueEmail(fields.email,p.id);const emailChanged=!!fields.email&&fields.email!==p.email;const next={...p,...fields,budget:memberBudget(fields.budget,p.budget),profileVersion:(p.profileVersion||0)+1};
     next.initials=next.name.split(/\s+/).map(v=>v[0]).slice(0,2).join('').toUpperCase();store.db.exec('BEGIN IMMEDIATE');
     try {
       store.put('people',id,next);
@@ -130,7 +140,13 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
     save('user',message);
     if(requestsOverride(message))return res.json(save('assistant','Only the verified owner can change spending rules. I can help you with an assigned task or prepare a request within the current policy.',{draft:null,proposals:[]}));
     try {
-      const result=await o.callAI({mode:'workspace',agentInstructions:instructions,message,history,authenticatedPerson:assistantMember(store,p),people:isOwner?store.people().map(x=>assistantMember(store,x)):[assistantMember(store,p)],tasks,projects:store.projects().filter(project=>isOwner||tasks.some(task=>task.projectId===project.id)).map(project=>({...project,committed:store.committed(project.id)})),suppliers:store.suppliers(),categories,policy:store.policy(),requests:requests.slice(0,30),activity:store.events().filter(e=>isOwner||requests.some(r=>r.id===e.requestId)).slice(0,20),memory:store.list<any>('memory').filter(n=>n.personId===p.id||n.personId==='workspace'),moneyUnits:'All numeric stored budgets are integer stroops. Divide by 10000000 for XLM. Proposal amounts must be decimal XLM strings.'});
+      const paymentSetup = isOwner ? o.testnet.setupStatus() : null;
+      const result=await o.callAI({mode:'workspace',agentInstructions:instructions,message,setup:paymentSetup && {
+        walletSelected:!!paymentSetup.owner, agentInitialized:paymentSetup.initialized,
+        agentSettings:paymentSetup.agentSettings, veloProjectLinked:!!paymentSetup.projectId,
+        gasKeySaved:paymentSetup.gasKeyStored, contractStatus:paymentSetup.checks,
+        merchantLinked:paymentSetup.boundSuppliers.length>0, currentTime:new Date().toISOString(),
+      },history,authenticatedPerson:assistantMember(store,p),people:isOwner?store.people().map(x=>assistantMember(store,x)):[assistantMember(store,p)],tasks,projects:store.projects().filter(project=>isOwner||tasks.some(task=>task.projectId===project.id)).map(project=>({...project,committed:store.committed(project.id)})),suppliers:store.suppliers(),categories,policy:store.policy(),requests:requests.slice(0,30),activity:store.events().filter(e=>isOwner||requests.some(r=>r.id===e.requestId)).slice(0,20),memory:store.list<any>('memory').filter(n=>n.personId===p.id||n.personId==='workspace'),moneyUnits:'All numeric stored budgets are integer stroops. Divide by 10000000 for XLM. Proposal amounts must be decimal XLM strings.'});
       const answer=z.object({reply:z.string().min(1).max(7000),draft:draftSchema.nullable().default(null),proposals:z.array(proposalSchema).max(3).default([]),model:z.string().optional()}).parse(sanitize(result));
       if(isOwner)answer.draft=null;
       if(answer.draft&&(!tasks.some(t=>t.id===answer.draft!.taskId&&t.active&&t.assigneeId===p.id)||!store.suppliers().some(s=>s.id===answer.draft!.supplierId&&s.approved&&s.category===answer.draft!.category)))answer.draft=null;
@@ -144,9 +160,15 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
       const proposals=[];
       for(const proposal of answer.proposals){
         if(!isOwner&&proposal.type!=='memory')continue;
-        if(proposal.type==='profile'){profileFields.parse(proposal.fields);if(!store.people().some(x=>x.id===proposal.targetId&&x.role==='member'))continue;}
-        if(proposal.type==='policy')policyFields.parse(proposal.fields);
-        if(proposal.type==='memory'){memoryFields.parse(proposal.fields);if(proposal.targetId!==p.id&&!(isOwner&&proposal.targetId==='workspace'))continue;}
+        if(proposal.type==='profile'&&(!profileFields.safeParse(proposal.fields).success||!store.people().some(x=>x.id===proposal.targetId&&x.role==='member')))continue;
+        if(proposal.type==='policy'&&!policyFields.safeParse(proposal.fields).success)continue;
+        if(proposal.type==='memory'&&(!memoryFields.safeParse(proposal.fields).success||(proposal.targetId!==p.id&&!(isOwner&&proposal.targetId==='workspace'))))continue;
+        if(Object.hasOwn(proposalFields,proposal.type)&&!proposalFields[proposal.type as keyof typeof proposalFields].safeParse(proposal.fields).success)continue;
+        if(proposal.type==='agent'){
+          if(!paymentSetup?.owner)continue;
+          try { parseAgentSettings(proposal.fields); } catch { continue; }
+          proposal.targetId=paymentSetup.owner;
+        }
         const stored={...proposal,id:randomUUID(),personId:p.id,state:'pending',policyVersion:store.policy().version,profileVersion:store.get<Person>('people',proposal.targetId)?.profileVersion||0};store.put('proposals',stored.id,stored);proposals.push(stored);
       }
       o.connected(answer.model);res.json(save('assistant',redact(answer.reply),{draft:answer.draft,proposals,model:answer.model}));
@@ -156,9 +178,23 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
     const v=store.get<any>('proposals',String(req.params.id));const p=res.locals.person as Person;
     if(!v||v.personId!==p.id)return res.status(404).json({error:'Proposal not found.'});if(v.state!=='pending')return res.status(409).json({error:'This proposal was already handled.'});
     if(v.type!=='memory'&&p.role!=='owner')return res.status(403).json({error:'Only the owner can apply this change.'});
-    if(v.type==='profile'){const member=store.get<Person>('people',v.targetId);if(!member||member.role==='owner')throw new Error('Member not found.');if((member.profileVersion||0)!==v.profileVersion)throw new Error('Profile changed. Ask for a fresh proposal.');const f=profileFields.parse(v.fields);store.put('people',member.id,{...member,...f,budget:f.budget===undefined?member.budget:(f.budget===null?undefined:/^0(?:\.0{1,7})?$/.test(f.budget)?0:units(f.budget)),profileVersion:(member.profileVersion||0)+1});}
-    if(v.type==='policy'){if(store.policy().version!==v.policyVersion)throw new Error('Policy changed. Ask for a fresh proposal.');const f=policyFields.parse(v.fields),policy={...store.policy(),...f,version:store.policy().version+1};for(const field of ['perRequest','autoLimit','projectLimit'] as const)policy[field]=f[field]===undefined?store.policy()[field]:units(f[field]!);if(policy.autoLimit>policy.perRequest||policy.perRequest>policy.projectLimit)throw new Error('Automatic limit must be within request and project limits.');store.put('policy','main',policy);}
-    if(v.type==='memory'){const f=memoryFields.parse(v.fields);if(v.targetId!==p.id&&!(p.role==='owner'&&v.targetId==='workspace'))throw new Error('Note access denied.');if(store.list('memory').length>=200)throw new Error('Remove an old memory note first.');const id=randomUUID();store.put('memory',id,{id,personId:v.targetId,text:redact(f.text),createdAt:new Date().toISOString()});}
-    v.state='applied';store.put('proposals',v.id,v);store.event('Suggestion applied',v.summary,p.name,null,'policy');res.json({ok:true});
+    store.db.exec('BEGIN IMMEDIATE');
+    try {
+      if(v.type==='profile'){const member=store.get<Person>('people',v.targetId);if(!member||member.role==='owner')throw new Error('Member not found.');if((member.profileVersion||0)!==v.profileVersion)throw new Error('Profile changed. Ask for a fresh proposal.');const f=profileFields.parse(v.fields);store.put('people',member.id,{...member,...f,budget:memberBudget(f.budget,member.budget),profileVersion:(member.profileVersion||0)+1});}
+      if(v.type==='policy'){if(store.policy().version!==v.policyVersion)throw new Error('Policy changed. Ask for a fresh proposal.');const f=policyFields.parse(v.fields),policy={...store.policy(),...f,version:store.policy().version+1};for(const field of ['perRequest','autoLimit','projectLimit'] as const)policy[field]=f[field]===undefined?store.policy()[field]:units(f[field]!);if(policy.autoLimit>policy.perRequest||policy.perRequest>policy.projectLimit)throw new Error('Automatic limit must be within request and project limits.');store.put('policy','main',policy);}
+      if(v.type==='memory'){const f=memoryFields.parse(v.fields);if(v.targetId!==p.id&&!(p.role==='owner'&&v.targetId==='workspace'))throw new Error('Note access denied.');if(store.list('memory').length>=200)throw new Error('Remove an old memory note first.');const id=randomUUID();store.put('memory',id,{id,personId:v.targetId,text:redact(f.text),createdAt:new Date().toISOString()});}
+      if(v.type==='agent')o.testnet.saveAgentSettings(v.targetId,v.fields);
+      if(Object.hasOwn(recordKinds,v.type)){
+        const kind=recordKinds[v.type as keyof typeof recordKinds];
+        const fields=v.type==='member'?{...memberProfileFields.parse(v.fields),email:emailSchema.parse(req.body?.email)}:v.fields;
+        createSetupRecord(store,kind,fields,p.name);
+      }
+      v.state='applied';store.put('proposals',v.id,v);store.event('Suggestion applied',v.summary,p.name,null,'policy');
+      store.db.exec('COMMIT');
+    } catch (error) {
+      store.db.exec('ROLLBACK');
+      throw error;
+    }
+    res.json({ok:true});
   });
 }

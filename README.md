@@ -47,6 +47,12 @@ Close that terminal when you finish the sample demo. Start from a new terminal o
 
 Member budgets are lifetime totals across projects. Zero blocks spending while keeping chat access. Clearing the member limit returns to the project limits. Without AI, the request form still works and the owner can review eligible requests manually.
 
+## Owner setup
+
+Open **Overview** to track workspace setup and Testnet setup separately. Use the action on each step to enter the details yourself, or select **Set up with assistant** to work through missing steps in conversation. The assistant drafts records for you to review and apply. Enter a new member’s email on the review card. Issue their code from Team after the profile is saved.
+
+In **Connections**, select the owner wallet and initialize the managed agent. Register the device, review the agent’s per-transaction cap and expiry, then sign. You can choose a specific date, no expiry, or no contract cap. Workspace spending limits still apply. Fund escrow and set up Velo before testing a payment. [Testnet walkthrough](docs/HACKATHON.md)
+
 ## Deploy the demo
 
 Use Vercel for the frontend and Render for the API and its persistent disk. Follow the [deployment guide](docs/DEPLOY.md).

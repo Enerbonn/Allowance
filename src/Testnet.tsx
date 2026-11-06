@@ -17,15 +17,18 @@ function getWalletKit() {
   return walletKit;
 }
 
-type Status = {
+export type TestnetStatus = {
   owner: string;
   projectId: string;
+  asset: string;
+  agentSettings: { label: string; maxAmount: string | null; expiresAt: string | null } | null;
+  boundSuppliers: string[];
   gasStationUrl: string;
   initialized: boolean;
   gasKeyStored: boolean;
   agent?: string;
   merchant?: string;
-  checks: { contracts: {name: string; exists: boolean}[]; error?: string; deviceOwner?: string; escrow?: string } | null;
+  checks: { contracts: {name: string; exists: boolean}[]; error?: string; deviceOwner?: string; escrow?: string; policy?: {agent: string; asset: string; maxAmount: string; expiresAt: string | null} } | null;
   operations: { id: string; state: string; error?: string; transactionHash?: string; claimHash?: string }[];
 };
 type Supplier = { id: string; name: string; approved: boolean };
@@ -41,6 +44,15 @@ async function api(path: string, body?: unknown) {
   return value;
 }
 
+export async function getTestnetStatus(): Promise<TestnetStatus> {
+  return api('/testnet');
+}
+export type PaymentStep = 'wallet' | 'agent' | 'escrow' | 'velo';
+
+function toLocalInput(date: Date) {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
 function projectIdFrom(input: string) {
   const value = input.trim();
   if (!value.includes('/')) return value;
@@ -52,8 +64,8 @@ function projectIdFrom(input: string) {
   return id;
 }
 
-export function TestnetPanel({ data }: { data: { suppliers: Supplier[] } }) {
-  const [state, setState] = useState<Status | null>(null);
+export function TestnetPanel({ data, focus }: { data: { suppliers: Supplier[]; policy: { perRequest: number } }; focus?: PaymentStep }) {
+  const [state, setState] = useState<TestnetStatus | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [wallet, setWallet] = useState('');
@@ -62,15 +74,35 @@ export function TestnetPanel({ data }: { data: { suppliers: Supplier[] } }) {
   const [message, setMessage] = useState('');
   const [projectInput, setProjectInput] = useState('');
   const [gasKey, setGasKey] = useState('');
+  const [agentLabel, setAgentLabel] = useState('Allowance purchasing agent');
+  const [cap, setCap] = useState(String(data.policy.perRequest / 1e7));
+  const [capEnabled, setCapEnabled] = useState(true);
+  const [expiry, setExpiry] = useState(() => toLocalInput(new Date(Date.now() + 48 * 3600_000)));
+  const [expiryEnabled, setExpiryEnabled] = useState(true);
+  function loadAgentTerms(value: TestnetStatus) {
+    const saved = value.agentSettings;
+    const verified = value.checks?.policy;
+    setAgentLabel(saved?.label || 'Allowance purchasing agent');
+    setCapEnabled(saved ? saved.maxAmount !== null : !verified || Number(verified.maxAmount) > 0);
+    setCap(saved?.maxAmount ?? (verified && Number(verified.maxAmount) > 0 ? String(Number(verified.maxAmount) / 1e7) : String(data.policy.perRequest / 1e7)));
+    setExpiryEnabled(saved ? saved.expiresAt !== null : !verified || verified.expiresAt !== null);
+    const date = saved?.expiresAt ?? verified?.expiresAt;
+    setExpiry(toLocalInput(date ? new Date(date) : new Date(Date.now() + 48 * 3600_000)));
+  }
   const approved = data.suppliers.filter(s => s.approved);
   const supplierId = approved.some(s => s.id === supplier) ? supplier : approved[0]?.id || '';
 
   useEffect(() => {
-    void api('/testnet').then((value: Status) => {
+    void getTestnetStatus().then((value) => {
       setState(value);
       setProjectInput(value.projectId);
+      loadAgentTerms(value);
     }).catch(e => setError(e.message));
   }, []);
+
+  useEffect(() => {
+    if (focus && state) document.getElementById('testnet-step-' + focus)?.scrollIntoView({block:'start'});
+  }, [focus, Boolean(state)]);
 
   async function run(label: string, operation: () => Promise<{hash?: string} | void>) {
     setBusy(label);
@@ -78,7 +110,7 @@ export function TestnetPanel({ data }: { data: { suppliers: Supplier[] } }) {
     setMessage('');
     try {
       const result = await operation();
-      setState(await api('/testnet'));
+      setState(await getTestnetStatus());
       if (result?.hash) setMessage('Confirmed Testnet transaction: ' + result.hash);
     } catch (e) {
       setError(e && typeof e === 'object' && 'message' in e ? String(e.message) : 'The wallet operation did not complete.');
@@ -97,9 +129,10 @@ export function TestnetPanel({ data }: { data: { suppliers: Supplier[] } }) {
     const kit = await getWalletKit();
     const { address } = await kit.authModal();
     await checkTestnet(kit.selectedModule.productId);
-    const selected: Status = await api('/testnet/wallet', { address });
+    const selected: TestnetStatus = await api('/testnet/wallet', { address });
     setWallet(address);
     setProjectInput(selected.projectId);
+    loadAgentTerms(selected);
     setGasKey('');
     setMessage('Testnet wallet connected. You can switch accounts from your wallet extension.');
   }
@@ -110,6 +143,13 @@ export function TestnetPanel({ data }: { data: { suppliers: Supplier[] } }) {
     const current = await kit.fetchAddress();
     if (current.address !== wallet) throw new Error('Your wallet account changed. Click Connect owner wallet to use it.');
     await checkTestnet(kit.selectedModule.productId);
+    if (kind === 'registerAgent') {
+      await api('/testnet/agent-settings', { address: wallet, settings: {
+        label: agentLabel,
+        maxAmount: capEnabled ? cap : null,
+        expiresAt: expiryEnabled ? new Date(expiry).toISOString() : null,
+      }});
+    }
     const pending = await api('/testnet/prepare', { kind, amount: deposit });
     const signed = await kit.signTransaction(pending.unsignedXdr, { networkPassphrase: pending.networkPassphrase, address: pending.owner });
     if (!signed.signedTxXdr) throw new Error('The wallet did not sign.');
@@ -125,15 +165,15 @@ export function TestnetPanel({ data }: { data: { suppliers: Supplier[] } }) {
     </div>
     <div className="notice"><ShieldCheck size={18}/><p>Connect a wallet to get started. Registration and escrow deposits each ask for a signature. The demo merchant receives test XLM.</p></div>
     <ol className="testnet-steps">
-      <li>
+      <li id="testnet-step-wallet">
         <h3>Choose your owner wallet</h3>
         <p>Choose a wallet that supports Stellar Testnet signing. To switch, select another account in your wallet and connect again.</p>
         <button className="secondary-btn" disabled={!!busy} onClick={() => void run('wallet connection', connect)}><Wallet size={15}/>{connected ? 'Connect or switch wallet' : 'Connect owner wallet'}</button>
         {state.owner && <small>{connected ? 'Connected' : 'Saved wallet'} · {state.owner}</small>}
         {connected && <a className="text-btn" href={'https://friendbot.stellar.org/?addr=' + encodeURIComponent(wallet)} target="_blank" rel="noreferrer">Fund a new wallet with Friendbot <ExternalLink size={14}/></a>}
       </li>
-      <li>
-        <h3>Prepare the Noir agent and escrow</h3>
+      <li id="testnet-step-agent">
+        <h3>Set up the Noir agent</h3>
         <p>Allowance creates a dedicated agent and demo merchant for your wallet. Authorize the agent and deposit test XLM into its escrow.</p>
         <div className="testnet-actions">
           <button className="secondary-btn" disabled={!!busy || !connected} onClick={() => void run('demo accounts', () => api('/testnet/initialize', {}))}>{state.initialized ? 'Check / fund demo accounts' : 'Initialize demo accounts'}</button>
@@ -143,22 +183,42 @@ export function TestnetPanel({ data }: { data: { suppliers: Supplier[] } }) {
         {state.checks && <>
           <ul>{state.checks.contracts.map(c => <li key={c.name}>{c.name}: {c.exists ? 'Present on Testnet' : 'Not verified / unavailable'}</li>)}</ul>
           <p>{state.checks.error || `Device owner: ${state.checks.deviceOwner || 'not registered'} · Escrow: ${Number(state.checks.escrow || 0) / 1e7} XLM`}</p>
+          {state.checks.policy && <p>Confirmed terms · {state.checks.policy.maxAmount === '0' ? 'No contract cap' : `${Number(state.checks.policy.maxAmount) / 1e7} XLM per transaction`} · {state.checks.policy.expiresAt ? `Expires ${new Date(state.checks.policy.expiresAt).toLocaleString()}` : 'No expiry'}</p>}
         </>}
         <div className="testnet-actions">
           <button className="secondary-btn" disabled={!!busy || !connected || !state.initialized} onClick={() => void run('device registration', () => sign('registerDevice'))}>Register device</button>
-          <button className="secondary-btn" disabled={!!busy || !connected || !state.initialized} onClick={() => void run('agent authorization', () => sign('registerAgent'))}>Authorize agent for 48 hours</button>
+        </div>
+        <form className="agent-terms" onSubmit={e => { e.preventDefault(); void run('agent authorization', () => sign('registerAgent')); }}>
+          <label>Agent name<input required minLength={2} maxLength={80} value={agentLabel} onChange={e => setAgentLabel(e.target.value)}/></label>
+          <p>The authorization applies to the Allowance-managed agent shown above.</p>
+          <label className="agent-option"><input type="checkbox" checked={capEnabled} onChange={e => setCapEnabled(e.target.checked)}/>Set a cap per transaction</label>
+          {capEnabled && <label>Contract cap per transaction (XLM)<input required inputMode="decimal" pattern="[0-9]+(\.[0-9]{1,7})?" value={cap} onChange={e => setCap(e.target.value)}/></label>}
+          {!capEnabled && <p>Workspace spending limits still apply.</p>}
+          <label className="agent-option"><input type="checkbox" checked={expiryEnabled} onChange={e => setExpiryEnabled(e.target.checked)}/>Set an expiry</label>
+          {expiryEnabled && <label>Authorization expiry (local time)<input type="datetime-local" required value={expiry} onChange={e => setExpiry(e.target.value)}/></label>}
+          {!expiryEnabled && <p>The authorization will have no expiry date.</p>}
+          {state.checks?.policy ? <>
+            <p>Changing these terms takes two signatures. Revoke the current authorization, then sign the replacement. Agent spending pauses between signatures.</p>
+            <button type="button" className="secondary-btn" disabled={!!busy || !connected} onClick={() => void run('agent revocation', () => sign('revokeAgent'))}>Review and sign revocation</button>
+          </> : <button className="secondary-btn" disabled={!!busy || !connected || !state.initialized || state.checks?.deviceOwner !== state.owner}>Review and sign authorization</button>}
+        </form>
+      </li>
+      <li id="testnet-step-escrow">
+        <h3>Fund Noir escrow</h3>
+        <p>Choose how much test XLM to deposit from your owner wallet.</p>
+        <div className="testnet-actions">
           <label>Escrow deposit (XLM)<input inputMode="decimal" value={deposit} onChange={e => setDeposit(e.target.value)}/></label>
-          <button className="secondary-btn" disabled={!!busy || !connected || !state.initialized} onClick={() => void run('escrow deposit', () => sign('fundEscrow'))}>Review &amp; sign deposit</button>
+          <button className="secondary-btn" disabled={!!busy || !connected || state.checks?.deviceOwner !== state.owner} onClick={() => void run('escrow deposit', () => sign('fundEscrow'))}>Review and sign deposit</button>
         </div>
       </li>
-      <li>
+      <li id="testnet-step-velo">
         <h3>Link Velo Gas for sponsored payments</h3>
         <p>Use a registered Velo project for the selected wallet. Its Gas Station needs a funded Testnet relayer, enabled sponsorship and permissions for the Noir contracts.</p>
         <form className="testnet-actions" onSubmit={e => {
           e.preventDefault();
           void run('Velo project link', async () => {
             const projectId = projectIdFrom(projectInput);
-            const selected: Status = await api('/testnet/wallet', { address: wallet, projectId });
+            const selected: TestnetStatus = await api('/testnet/wallet', { address: wallet, projectId });
             setProjectInput(selected.projectId);
             setGasKey('');
             setMessage('Velo project saved for this wallet.');
@@ -179,7 +239,7 @@ export function TestnetPanel({ data }: { data: { suppliers: Supplier[] } }) {
           <label>Scoped Testnet Gas key<input type="password" autoComplete="off" value={gasKey} onChange={e => setGasKey(e.target.value)} maxLength={80} required placeholder={state.gasKeyStored ? 'Protected key saved' : 'Paste the Testnet Gas key'}/></label>
           <button className="secondary-btn" disabled={!!busy || !connected || !gasKey.trim()}>Save Gas key</button>
         </form>}
-        {state.gasKeyStored && <p>A Windows-protected Gas key is saved for this project.</p>}
+        {state.gasKeyStored && <p>An encrypted Gas key is saved for this project.</p>}
         <div className="testnet-actions">
           <label>Approved demo supplier<select value={supplierId} onChange={e => setSupplier(e.target.value)}>
             {!approved.length && <option value="">Add an approved supplier first</option>}

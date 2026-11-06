@@ -26,7 +26,7 @@ export const policySchema = z.object({
   autoPay: z.boolean(), paused: z.boolean(), description: z.string().max(4000),
 });
 export type Policy = { id: string; version: number; perRequest: number; autoLimit: number; projectLimit: number; allowedCategories: string[]; requireEvidence: boolean; autoPay: boolean; paused: boolean; description: string };
-export type Person = { id: string; name: string; role: 'owner' | 'member'; title: string; initials: string; active: boolean; email?: string; description?: string; budget?: number; allowedCategories?: string[]; profileVersion?: number };
+export type Person = { id: string; name: string; role: 'owner' | 'member'; title: string; initials: string; active: boolean; email?: string; description?: string; goal?: string; spendingGuidance?: string; budget?: number; allowedCategories?: string[]; profileVersion?: number };
 export type Project = { id: string; name: string; description: string; budget: number; active: boolean };
 export type Task = { id: string; projectId: string; assigneeId: string; title: string; description: string; active: boolean };
 export type Supplier = { id: string; name: string; category: string; domain: string; approved: boolean; destination: string };
