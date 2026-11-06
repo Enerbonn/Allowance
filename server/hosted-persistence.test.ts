@@ -41,6 +41,9 @@ test('Postgres restores signup, sessions and evidence and fences an older writer
   const other = { name: 'Second Owner', email: 'second@example.test', code: 'synthetic-other-code' };
   const getCookie = (reply: Response) => reply.headers.get('set-cookie')!.split(';')[0];
   try {
+    const wrongLogin = new URL(connection!);
+    wrongLogin.password = randomBytes(12).toString('hex');
+    await assert.rejects(openHostedPersistence(wrongLogin.toString(), temp, true), /Postgres rejected the login/);
     const first = await launch();
     const signup = await first('/auth/signup', owner);
     assert.equal(signup.status, 200, await signup.clone().text());

@@ -46,6 +46,31 @@ function capture(directory: string) {
   return files;
 }
 
+function startupFailure(error: unknown, phase: 'connect' | 'initialize' | 'restore', direct: boolean) {
+  const failure = error as { code?: string; message?: string } | null;
+  const code = failure?.code || '';
+  const message = failure?.message || '';
+  if (/tenant.*(?:not found|does not exist)/i.test(message)) {
+    return 'The pooler could not find this project or database user. Copy the whole Session pooler URI from Supabase.';
+  }
+  if (code === '28P01' || code === '28000') {
+    return 'Postgres rejected the login. Check the database password and copy the full Session pooler URI.';
+  }
+  if (/CERT|TLS|SSL/.test(code) || /certificate/i.test(message)) {
+    return 'TLS certificate verification failed. Check the Supabase endpoint and trusted certificates.';
+  }
+  if (phase === 'restore') {
+    return 'Stored data could not be restored. Check that ALLOWANCE_STORAGE_KEY matches the key used to encrypt it.';
+  }
+  if (phase === 'connect') {
+    return direct
+      ? 'The Direct endpoint could not be reached. Use the Supabase Session pooler URI on Render.'
+      : 'The Postgres connection could not be opened. Check the Session pooler host, port, and project status.';
+  }
+  if (code === '42501') return 'The database login cannot create the private Allowance schema.';
+  return 'Postgres connected, but the private Allowance schema could not be initialized.';
+}
+
 export async function openHostedPersistence(connection: string, baseDirectory: string, allowTestConnection = false) {
   let url: URL;
   try { url = new URL(connection); }
@@ -80,8 +105,10 @@ export async function openHostedPersistence(connection: string, baseDirectory: s
     }
   }
 
+  let phase: 'connect' | 'initialize' | 'restore' = 'connect';
   try {
     await transaction(async client => {
+      phase = 'initialize';
       await client.query('SELECT pg_advisory_xact_lock(417250031)');
       await client.query('CREATE SCHEMA IF NOT EXISTS allowance_private');
       await client.query('REVOKE ALL ON SCHEMA allowance_private FROM PUBLIC');
@@ -89,6 +116,7 @@ export async function openHostedPersistence(connection: string, baseDirectory: s
       await client.query('CREATE TABLE IF NOT EXISTS allowance_private.files (path text PRIMARY KEY, digest text NOT NULL, content text NOT NULL)');
       await client.query('INSERT INTO allowance_private.writer VALUES (1, $1) ON CONFLICT (id) DO UPDATE SET epoch = EXCLUDED.epoch', [epoch]);
       const { rows } = await client.query<{path: string; digest: string; content: string}>('SELECT path, digest, content FROM allowance_private.files');
+      phase = 'restore';
       let restoredBytes = 0;
       for (const { path, digest, content } of rows) {
         if (!validPath(path)) throw new Error('Unexpected stored workspace path.');
@@ -101,9 +129,10 @@ export async function openHostedPersistence(connection: string, baseDirectory: s
         saved.set(path, digest);
       }
     });
-  } catch {
+  } catch (error) {
     await pool.end();
-    throw new Error('Could not open Supabase persistence. Check the connection string, TLS and storage key.');
+    const direct = url.hostname.startsWith('db.') && url.hostname.endsWith('.supabase.co');
+    throw new Error('Could not open Supabase persistence. ' + startupFailure(error, phase, direct));
   }
 
   let pending = Promise.resolve();
