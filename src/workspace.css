@@ -30,7 +30,13 @@
 @media(max-width:620px){.owner-setup{padding:14px}.setup-group li{grid-template-columns:22px minmax(0,1fr)}.setup-step-actions{grid-column:2}.setup-step-actions button{min-height:44px}}
 .agent-terms{display:grid;gap:10px;max-width:480px;margin-top:14px}
 .agent-terms>label{display:grid;gap:5px;font-size:13px}
-.agent-terms>label.agent-option{display:flex;align-items:center;gap:8px;min-height:40px}
+.agent-terms>label.agent-option{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:8px;min-height:40px}
+.agent-terms .agent-option input{width:auto;flex:none;margin:0}
+.testnet-steps .payment-step-status{padding:10px 12px;background:var(--pale,#e7f1ea);border-radius:7px}
+.payment-details{font-size:12px;margin-top:14px}
+.payment-details summary{cursor:pointer;width:fit-content}
+.payment-subheading{margin:24px 0 8px}
+.payment-feedback p{overflow-wrap:anywhere}
 .agent-terms input:not([type=checkbox]){padding:10px;border:1px solid var(--border);border-radius:7px;max-width:100%;min-width:0}
 .agent-terms button{justify-self:start;min-height:44px}
 .testnet-steps li{scroll-margin-top:85px}

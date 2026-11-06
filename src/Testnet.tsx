@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Wallet, RefreshCw, ShieldCheck, ExternalLink } from 'lucide-react';
+import { Wallet, RefreshCw, ShieldCheck, ExternalLink, LoaderCircle } from 'lucide-react';
 import { getNetworkDetails } from '@stellar/freighter-api';
 import { restoreWalletSession, TESTNET } from './wallet-session';
 
@@ -68,7 +68,7 @@ function projectIdFrom(input: string) {
   return id;
 }
 
-export function TestnetPanel({ data, focus }: { data: { suppliers: Supplier[]; policy: { perRequest: number } }; focus?: PaymentStep }) {
+export function TestnetPanel({ data, focus, addSupplier }: { data: { suppliers: Supplier[]; policy: { perRequest: number } }; focus?: PaymentStep; addSupplier: () => void }) {
   const [state, setState] = useState<TestnetStatus | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
@@ -77,6 +77,7 @@ export function TestnetPanel({ data, focus }: { data: { suppliers: Supplier[]; p
   const [withdrawal, setWithdrawal] = useState('');
   const [supplier, setSupplier] = useState('');
   const [message, setMessage] = useState('');
+  const [actionStep, setActionStep] = useState<PaymentStep>('wallet');
   const [projectInput, setProjectInput] = useState('');
   const [gasKey, setGasKey] = useState('');
   const [agentLabel, setAgentLabel] = useState('Allowance purchasing agent');
@@ -115,14 +116,16 @@ export function TestnetPanel({ data, focus }: { data: { suppliers: Supplier[]; p
     if (focus && state) document.getElementById('testnet-step-' + focus)?.scrollIntoView({block:'start'});
   }, [focus, Boolean(state)]);
 
-  async function run(label: string, operation: () => Promise<{hash?: string} | void>) {
+  async function run(label: string, operation: () => Promise<{hash?: string} | void>, step: PaymentStep = 'wallet', success = 'Done.') {
+    setActionStep(step);
     setBusy(label);
     setError('');
     setMessage('');
     try {
       const result = await operation();
       setState(await getTestnetStatus());
-      if (result?.hash) setMessage('Confirmed Testnet transaction: ' + result.hash);
+      if (result?.hash) setMessage(success + ' Testnet transaction: ' + result.hash);
+      else if (step !== 'wallet') setMessage(success);
     } catch (e) {
       setError(e && typeof e === 'object' && 'message' in e ? String(e.message) : 'The wallet operation did not complete.');
     } finally {
@@ -163,19 +166,36 @@ export function TestnetPanel({ data, focus }: { data: { suppliers: Supplier[]; p
       }});
     }
     const pending = await api('/testnet/prepare', { kind, amount: kind === 'defundEscrow' ? withdrawal : deposit });
+    setBusy('waiting for your approval in the wallet extension');
     const signed = await kit.signTransaction(pending.unsignedXdr, { networkPassphrase: pending.networkPassphrase, address: pending.owner });
     if (!signed.signedTxXdr) throw new Error('The wallet did not sign.');
+    setBusy('confirming your update on Stellar Testnet');
     return api('/testnet/submit-setup', { id: pending.id, signedXdr: signed.signedTxXdr });
   }
 
   if (!state) return error ? <p role="alert" className="form-error">{error}</p> : <p role="status">Loading Testnet setup…</p>;
   const connected = !!wallet && wallet === state.owner;
+  const checks = state.checks;
+  const deviceRegistered = !!state.owner && checks?.deviceOwner === state.owner;
+  const spendingPermission = checks?.policy;
+  const permissionExpired = !!spendingPermission?.expiresAt && Date.parse(spendingPermission.expiresAt) <= Date.now();
+  const canApproveSpending = !busy && connected && state.initialized && deviceRegistered && !spendingPermission;
+  const balance = checks?.escrow === undefined || checks.error ? null : Number(checks.escrow) / 1e7;
+  const supplierLinked = state.boundSuppliers.includes(supplierId);
+  const walletHint = state.owner ? 'Reconnect the saved wallet in step 1 to make changes.' : 'Connect your owner wallet in step 1 to get started.';
+  function feedback(step: PaymentStep) {
+    if (actionStep !== step) return null;
+    return <div className="payment-feedback">
+      <div role="status">{!busy && message && <p className="notice">{message}</p>}</div>
+      {error && <p role="alert" className="form-error">{error}</p>}
+    </div>;
+  }
   return <section className="testnet-panel">
     <div className="section-head">
-      <div><h2>Connect the payment path</h2><p>Stellar Testnet only. Owner signatures stay in your wallet.</p></div>
+      <div><h2>Set up test payments</h2><p>Use Stellar Testnet to try team spending with test XLM.</p></div>
       <span className="badge neutral">Testnet</span>
     </div>
-    <div className="notice"><ShieldCheck size={18}/><p>Connect a wallet to get started. Registration and escrow deposits each ask for a signature. The demo merchant receives test XLM.</p></div>
+    <div className="notice"><ShieldCheck size={18}/><p>Start with your wallet, then set spending limits, add test funds, and set up payment fees. Approve changes in your wallet when prompted.</p></div>
     <ol className="testnet-steps">
       <li id="testnet-step-wallet">
         <h3>Choose your owner wallet</h3>
@@ -192,53 +212,67 @@ export function TestnetPanel({ data, focus }: { data: { suppliers: Supplier[]; p
         {state.owner && <small>{connected ? 'Connected' : 'Saved wallet'} · {state.owner}</small>}
         {state.owner && !connected && <p>To enable wallet actions, unlock the saved account on Stellar Testnet, then choose <strong>Connect or add wallet</strong>. Your saved setup is still here.</p>}
         {connected && <a className="text-btn" href={'https://friendbot.stellar.org/?addr=' + encodeURIComponent(wallet)} target="_blank" rel="noreferrer">Fund a new wallet with Friendbot <ExternalLink size={14}/></a>}
+        {feedback('wallet')}
       </li>
       <li id="testnet-step-agent">
-        <h3>Set up the Noir agent</h3>
-        <p>Allowance creates a dedicated agent and demo merchant for your wallet. Authorize the agent and deposit test XLM into its escrow.</p>
+        <h3>Set spending permission</h3>
+        <p>Noir records on Stellar what Allowance can spend on your behalf. You decide the maximum per payment and when that permission ends.</p>
+        <p className="payment-step-status"><strong>{checks?.error ? 'Status unavailable' : permissionExpired ? 'Permission expired' : spendingPermission ? 'Permission recorded' : deviceRegistered ? 'Ready to authorize' : state.initialized ? 'Test accounts created' : 'Setup needed'}</strong>
+          {' · '}{checks?.error ? 'Refresh the payment setup to try again.' : spendingPermission ? `${spendingPermission.maxAmount === '0' ? 'No separate limit per payment' : `${Number(spendingPermission.maxAmount) / 1e7} XLM per payment`} · ${spendingPermission.expiresAt ? `${permissionExpired ? 'Expired' : 'Ends'} ${new Date(spendingPermission.expiresAt).toLocaleString()}` : 'No end date'}` : deviceRegistered ? 'Set a limit and approve it in your wallet.' : state.initialized ? 'Register your wallet and check its status.' : 'Create the accounts used to send and receive test payments.'}
+        </p>
+        {!connected && <p>{walletHint}</p>}
         <div className="testnet-actions">
-          <button className="secondary-btn" disabled={!!busy || !connected} onClick={() => void run('demo accounts', () => api('/testnet/initialize', {}))}>{state.initialized ? 'Check / fund demo accounts' : 'Initialize demo accounts'}</button>
-          <button className="secondary-btn" disabled={!!busy} onClick={() => void run('contract inspection', () => api('/testnet/inspect', {}))}><RefreshCw size={15}/>Inspect contracts</button>
+          <button className="secondary-btn" disabled={!!busy || !connected} onClick={() => void run('preparing test payment accounts', () => api('/testnet/initialize', {}), 'agent', 'Test payment accounts are ready.')}>{state.initialized ? 'Check and fund test accounts' : 'Create test payment accounts'}</button>
+          <button className="secondary-btn" disabled={!!busy} onClick={() => void run('checking Noir on Stellar Testnet', () => api('/testnet/inspect', {}), 'agent', 'Setup status refreshed.') }><RefreshCw size={15}/>Refresh setup status</button>
         </div>
-        {state.agent && <small>Agent: {state.agent}<br/>Demo merchant: {state.merchant}</small>}
-        {state.checks && <>
-          <ul>{state.checks.contracts.map(c => <li key={c.name}>{c.name}: {c.exists ? 'Present on Testnet' : 'Not verified / unavailable'}</li>)}</ul>
-          <p>{state.checks.error || `Device owner: ${state.checks.deviceOwner || 'not registered'} · Escrow: ${Number(state.checks.escrow || 0) / 1e7} XLM`}</p>
-          {state.checks.policy && <p>Confirmed terms · {state.checks.policy.maxAmount === '0' ? 'No contract cap' : `${Number(state.checks.policy.maxAmount) / 1e7} XLM per transaction`} · {state.checks.policy.expiresAt ? `Expires ${new Date(state.checks.policy.expiresAt).toLocaleString()}` : 'No expiry'}</p>}
-        </>}
+        {(state.agent || checks) && <details className="payment-details">
+          <summary>Technical details</summary>
+          {state.agent && <small>Agent: {state.agent}<br/>Test payment recipient: {state.merchant}</small>}
+          {checks && <><ul>{checks.contracts.map(c => <li key={c.name}>{c.name}: {c.exists ? 'Present on Testnet' : 'Unverified'}</li>)}</ul>
+          <small>{checks.error || `Registered wallet: ${checks.deviceOwner || 'Pending registration'}`}</small></>}
+        </details>}
         <div className="testnet-actions">
-          <button className="secondary-btn" disabled={!!busy || !connected || !state.initialized} onClick={() => void run('device registration', () => sign('registerDevice'))}>Register device</button>
+          <button className="secondary-btn" disabled={!!busy || !connected || !state.initialized || deviceRegistered} onClick={() => void run('preparing wallet registration', () => sign('registerDevice'), 'agent', 'Wallet registration confirmed.')}>{deviceRegistered ? 'Wallet registered with Noir' : 'Register wallet with Noir'}</button>
         </div>
-        <form className="agent-terms" onSubmit={e => { e.preventDefault(); void run('agent authorization', () => sign('registerAgent')); }}>
-          <label>Agent name<input required minLength={2} maxLength={80} value={agentLabel} onChange={e => setAgentLabel(e.target.value)}/></label>
-          <p>The authorization applies to the Allowance-managed agent shown above.</p>
-          <label className="agent-option"><input type="checkbox" checked={capEnabled} onChange={e => setCapEnabled(e.target.checked)}/>Set a cap per transaction</label>
-          {capEnabled && <label>Contract cap per transaction (XLM)<input required inputMode="decimal" pattern="[0-9]+(\.[0-9]{1,7})?" value={cap} onChange={e => setCap(e.target.value)}/></label>}
-          {!capEnabled && <p>Workspace spending limits still apply.</p>}
-          <label className="agent-option"><input type="checkbox" checked={expiryEnabled} onChange={e => setExpiryEnabled(e.target.checked)}/>Set an expiry</label>
-          {expiryEnabled && <label>Authorization expiry (local time)<input type="datetime-local" required value={expiry} onChange={e => setExpiry(e.target.value)}/></label>}
-          {!expiryEnabled && <p>The authorization will have no expiry date.</p>}
-          {state.checks?.policy ? <>
-            <p>Changing these terms takes two signatures. Revoke the current authorization, then sign the replacement. Agent spending pauses between signatures.</p>
-            <button type="button" className="secondary-btn" disabled={!!busy || !connected} onClick={() => void run('agent revocation', () => sign('revokeAgent'))}>Review and sign revocation</button>
-          </> : <button className="secondary-btn" disabled={!!busy || !connected || !state.initialized || state.checks?.deviceOwner !== state.owner}>Review and sign authorization</button>}
+        <form className="agent-terms" onSubmit={e => { e.preventDefault(); if (canApproveSpending) void run('preparing spending permission', () => sign('registerAgent'), 'agent', 'Spending permission confirmed.'); }}>
+          <label>Payment agent name<input required minLength={2} maxLength={80} value={agentLabel} onChange={e => setAgentLabel(e.target.value)}/></label>
+          <label className="agent-option"><input type="checkbox" checked={capEnabled} onChange={e => setCapEnabled(e.target.checked)}/>Limit each payment</label>
+          {capEnabled && <label>Maximum per payment (test XLM)<input required inputMode="decimal" pattern="[0-9]+(\.[0-9]{1,7})?" value={cap} onChange={e => setCap(e.target.value)}/></label>}
+          <p>Team and project spending limits also apply.</p>
+          <label className="agent-option"><input type="checkbox" checked={expiryEnabled} onChange={e => setExpiryEnabled(e.target.checked)}/>Set an end date for spending permission</label>
+          {expiryEnabled && <label>Permission ends (your local time)<input type="datetime-local" required value={expiry} onChange={e => setExpiry(e.target.value)}/></label>}
+          {spendingPermission ? <>
+            <p>To update the limit or end date, first remove the current permission, then approve the new settings. Spending pauses between those two approvals.</p>
+            <button type="button" className="secondary-btn" disabled={!!busy || !connected} onClick={() => void run('preparing to remove spending permission', () => sign('revokeAgent'), 'agent', 'Previous permission removed. Review and approve the new settings when ready.')}>Remove current permission</button>
+          </> : <button className="secondary-btn" disabled={!canApproveSpending}>Review and approve spending</button>}
         </form>
+        {feedback('agent')}
       </li>
       <li id="testnet-step-escrow">
-        <h3>Manage Noir escrow</h3>
-        <p>Deposit test XLM or withdraw it back to the registered owner wallet. Each action requires your signature.</p>
-        <div className="testnet-actions"><span>{state.checks?.escrow!==undefined&&!state.checks.error?`Last checked balance: ${Number(state.checks.escrow)/1e7} XLM`:'Check the current escrow balance on Testnet.'}</span><button className="text-btn" disabled={!!busy||!state.owner} onClick={() => void run('escrow balance', () => api('/testnet/inspect', {}))}><RefreshCw size={14}/>Refresh balance</button></div>
+        <h3>Manage funds for team purchases</h3>
+        <p>Noir escrow is where you set aside test XLM for eligible purchases. Add funds from your owner wallet or return unused funds to it. Approve each transfer in your wallet.</p>
+        <p className="payment-step-status"><strong>{balance === null ? 'Balance unavailable' : balance > 0 ? 'Test funds available' : 'No test funds added'}</strong>
+          {' · '}{balance === null ? (deviceRegistered ? 'Refresh the balance to check your funds.' : 'Complete wallet registration in step 2.') : `Last checked balance: ${balance} test XLM`}
+        </p>
+        {!connected && <p>{walletHint}</p>}
+        <button className="text-btn" disabled={!!busy || !state.owner} onClick={() => void run('checking funds on Stellar Testnet', () => api('/testnet/inspect', {}), 'escrow', 'Balance check finished.') }><RefreshCw size={14}/>Refresh balance</button>
         <div className="testnet-actions">
-          <label>Escrow deposit (XLM)<input inputMode="decimal" value={deposit} onChange={e => setDeposit(e.target.value)}/></label>
-          <button className="secondary-btn" disabled={!!busy || !connected || !deposit.trim() || state.checks?.deviceOwner !== state.owner} onClick={() => void run('escrow deposit', async () => {const result=await sign('fundEscrow');setDeposit('');return result;})}>Review and sign deposit</button>
+          <label>Amount to add (test XLM)<input inputMode="decimal" value={deposit} onChange={e => setDeposit(e.target.value)}/></label>
+          <button className="secondary-btn" disabled={!!busy || !connected || !deposit.trim() || !deviceRegistered} onClick={() => void run('preparing your deposit', async () => {const result=await sign('fundEscrow');setDeposit('');return result;}, 'escrow', 'Funds added.')}>Review and add funds</button>
         </div><div className="testnet-actions">
-          <label>Escrow withdrawal (XLM)<input inputMode="decimal" value={withdrawal} onChange={e => setWithdrawal(e.target.value)}/></label>
-          <button className="secondary-btn" disabled={!!busy || !connected || !withdrawal.trim() || state.checks?.deviceOwner !== state.owner} onClick={() => void run('escrow withdrawal', async () => {const result=await sign('defundEscrow');setWithdrawal('');return result;})}>Review and sign withdrawal</button>
+          <label>Amount to return (test XLM)<input inputMode="decimal" value={withdrawal} onChange={e => setWithdrawal(e.target.value)}/></label>
+          <button className="secondary-btn" disabled={!!busy || !connected || !withdrawal.trim() || !deviceRegistered} onClick={() => void run('preparing your withdrawal', async () => {const result=await sign('defundEscrow');setWithdrawal('');return result;}, 'escrow', 'Funds returned to your wallet.')}>Review and return funds</button>
         </div>
+        {feedback('escrow')}
       </li>
       <li id="testnet-step-velo">
-        <h3>Link Velo Gas for sponsored payments</h3>
-        <p>Use a registered Velo project for the selected wallet. Its Gas Station needs a funded Testnet relayer, enabled sponsorship and permissions for the Noir contracts.</p>
+        <h3>Set up payment fees with Velo</h3>
+        <p>Velo Gas Station covers the Stellar network fees for eligible test payments. Link your Velo Testnet project and save its Gas Station key.</p>
+        <p className="payment-step-status"><strong>{state.gasKeyStored ? 'Velo settings saved' : state.projectId ? 'Project saved' : 'Project needed'}</strong>
+          {' · '}{state.gasKeyStored ? 'Velo checks the fee setup when a payment is sent.' : state.projectId ? 'Add the Gas Station key from your Velo project.' : 'Open Velo and paste the URL of your registered Testnet project.'}
+        </p>
+        {!connected && <p>{walletHint}</p>}
+        <details className="payment-details"><summary>Gas Station requirements</summary><p>In Velo, fund your Testnet relayer, enable fee sponsorship, and allow the Noir contracts.</p></details>
         <form className="testnet-actions" onSubmit={e => {
           e.preventDefault();
           void run('Velo project link', async () => {
@@ -246,8 +280,7 @@ export function TestnetPanel({ data, focus }: { data: { suppliers: Supplier[]; p
             const selected: TestnetStatus = await api('/testnet/wallet', { address: wallet, projectId });
             setProjectInput(selected.projectId);
             setGasKey('');
-            setMessage('Velo project saved for this wallet.');
-          });
+          }, 'velo', 'Velo project saved for this wallet.');
         }}>
           <label>Velo project URL or ID<input value={projectInput} onChange={e => setProjectInput(e.target.value)} required maxLength={400} placeholder="Paste the Velo project page URL"/></label>
           <button className="secondary-btn" disabled={!!busy || !connected || !projectInput.trim()}>Save project</button>
@@ -258,25 +291,27 @@ export function TestnetPanel({ data, focus }: { data: { suppliers: Supplier[]; p
           void run('Gas key setup', async () => {
             await api('/testnet/gas-key', { address: wallet, projectId: state.projectId, key: gasKey });
             setGasKey('');
-            setMessage('Testnet Gas key saved for this wallet and project.');
-          });
+          }, 'velo', 'Gas Station key saved for this project.');
         }}>
-          <label>Scoped Testnet Gas key<input type="password" autoComplete="off" value={gasKey} onChange={e => setGasKey(e.target.value)} maxLength={80} required placeholder={state.gasKeyStored ? 'Protected key saved' : 'Paste the Testnet Gas key'}/></label>
-          <button className="secondary-btn" disabled={!!busy || !connected || !gasKey.trim()}>Save Gas key</button>
+          <label>Testnet Gas Station key<input type="password" autoComplete="off" value={gasKey} onChange={e => setGasKey(e.target.value)} maxLength={80} required placeholder={state.gasKeyStored ? 'Protected key saved' : 'Paste the key from Velo'}/></label>
+          <button className="secondary-btn" disabled={!!busy || !connected || !gasKey.trim()}>Save key</button>
         </form>}
-        {state.gasKeyStored && <p>An encrypted Gas key is saved for this project.</p>}
+        <h4 className="payment-subheading">Choose a supplier for test purchases</h4>
+        <p>A supplier is a shop or service your team can request to buy from, such as a print shop or a design tool. Allowance sends test funds to a demo account when you link a supplier here. The actual business receives no payment.</p>
+        <p className="payment-step-status"><strong>{supplierLinked ? 'Demo recipient linked' : 'Demo recipient needed'}</strong>
+          {' · '}{supplierLinked ? 'Test payments for this supplier go to the demo account.' : !approved.length ? 'Add and approve a supplier first.' : !state.initialized ? 'Create test payment accounts in step 2 first.' : 'Choose a supplier and link the demo recipient.'}
+        </p>
         <div className="testnet-actions">
-          <label>Approved demo supplier<select value={supplierId} onChange={e => setSupplier(e.target.value)}>
-            {!approved.length && <option value="">Add an approved supplier first</option>}
+          {approved.length > 0 && <label>Approved shop or service<select value={supplierId} disabled={!!busy} onChange={e => setSupplier(e.target.value)}>
             {approved.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select></label>
-          <button className="secondary-btn" disabled={!!busy || !state.initialized || !supplierId} onClick={() => void run('merchant link', () => api('/testnet/bind-supplier', { supplierId }))}>Use dedicated demo merchant</button>
+          </select></label>}
+          {approved.length ? <button className="secondary-btn" disabled={!!busy || !state.initialized || !supplierId || supplierLinked} onClick={() => void run('linking the demo recipient', () => api('/testnet/bind-supplier', { supplierId }), 'velo', 'Demo recipient linked.')}>{supplierLinked ? 'Demo recipient linked' : 'Link demo recipient'}</button>
+            : <button className="secondary-btn" disabled={!!busy} onClick={addSupplier}>Add a supplier</button>}
         </div>
+        {feedback('velo')}
       </li>
     </ol>
-    {busy && <p role="status">Working on {busy}…</p>}
-    {message && <p role="status" className="notice">{message}</p>}
-    {error && <p role="alert" className="form-error">{error}</p>}
+    <div role="status">{busy && <div className="toast"><LoaderCircle size={16} className="spin" aria-hidden="true"/><span>In progress: {busy}…</span></div>}</div>
     {state.operations.length > 0 && <div className="surface-list">{state.operations.map(op => <div className="memory-note" key={op.id}><div><strong>{op.id}: {op.state}</strong><p>{op.error}</p><small>Authorization: {op.transactionHash || 'not submitted'}<br/>Merchant claim: {op.claimHash || 'not confirmed'}</small></div></div>)}</div>}
   </section>;
 }
