@@ -25,6 +25,7 @@ export type TestnetStatus = {
   wallets: {owner: string; projectId: string}[];
   projectId: string;
   asset: string;
+  contracts?: {paymentEscrow:string};
   agentSettings: { label: string; maxAmount: string | null; expiresAt: string | null } | null;
   boundSuppliers: string[];
   gasStationUrl: string;
@@ -33,9 +34,16 @@ export type TestnetStatus = {
   agent?: string;
   merchant?: string;
   checks: { checkedAt?: string; contracts: {name: string; exists: boolean}[]; error?: string; deviceOwner?: string; escrow?: string; policy?: {agent: string; asset: string; maxAmount: string; expiresAt: string | null} } | null;
-  operations: { id: string; state: string; error?: string; transactionHash?: string; claimHash?: string }[];
+  operations: { id: string; state: string; error?: string; transactionHash?: string; claimHash?: string; identity?: {requestId:string}; result?: {status:string;outerTransactionHash?:string|null} }[];
 };
 type Supplier = { id: string; name: string; approved: boolean };
+const paymentOperationLabels: Record<string,string> = {
+  reserved:'Preparing payment', sponsored:'Fee sponsorship reserved', velo_claimed:'Velo processing the payment',
+  submission_unknown:'Waiting for Velo confirmation', submitted:'Submitted to Stellar', succeeded:'Ready for recipient claim',
+  needs_reconciliation:'Payment needs a status check', claim_submitting:'Sending recipient claim',
+  claim_confirmation_pending:'Waiting for recipient claim', claim_needs_review:'Recipient claim needs attention',
+  claim_failed:'Recipient claim failed', authorization_failed:'Payment failed', claimed:'Paid on Testnet',
+};
 
 async function api(path: string, body?: unknown) {
   const response = await fetch('/api' + path, {
@@ -68,7 +76,7 @@ function projectIdFrom(input: string) {
   return id;
 }
 
-export function TestnetPanel({ data, focus, addSupplier }: { data: { suppliers: Supplier[]; policy: { perRequest: number } }; focus?: PaymentStep; addSupplier: () => void }) {
+export function TestnetPanel({ data, focus, addSupplier }: { data: { suppliers: Supplier[]; policy: { perRequest: number }; requests: {id:string;status:string;paymentProgress?:{label:string}}[] }; focus?: PaymentStep; addSupplier: () => void }) {
   const [state, setState] = useState<TestnetStatus | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
@@ -97,6 +105,7 @@ export function TestnetPanel({ data, focus, addSupplier }: { data: { suppliers: 
   }
   const approved = data.suppliers.filter(s => s.approved);
   const supplierId = approved.some(s => s.id === supplier) ? supplier : approved[0]?.id || '';
+  const paymentVersion=JSON.stringify(data.requests.filter(r=>r.status==='paid'||r.paymentProgress).map(r=>[r.id,r.status,r.paymentProgress?.label]));
 
   useEffect(() => {
     let active = true;
@@ -111,6 +120,13 @@ export function TestnetPanel({ data, focus, addSupplier }: { data: { suppliers: 
     }).catch(e => { if (active) setError(e.message); });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    if (!state || busy) return;
+    let active=true;
+    void getTestnetStatus().then(value=>{if(active)setState(value);}).catch(()=>{});
+    return ()=>{active=false;};
+  }, [paymentVersion]);
 
   useEffect(() => {
     if (focus && state) document.getElementById('testnet-step-' + focus)?.scrollIntoView({block:'start'});
@@ -217,6 +233,14 @@ export function TestnetPanel({ data, focus, addSupplier }: { data: { suppliers: 
       <li id="testnet-step-agent">
         <h3>Set spending permission</h3>
         <p>Noir records on Stellar what Allowance can spend on your behalf. You decide the maximum per payment and when that permission ends.</p>
+        <details className="payment-details"><summary>How to connect Noir</summary>
+          <ol className="payment-guide">
+            <li>Use the same Stellar Testnet wallet you connected in step 1. You can finish Noir setup right here.</li>
+            <li>Select <strong>Create test payment accounts</strong>. Allowance creates an agent that can send payments and a demo wallet that can receive them.</li>
+            <li>Select <strong>Register wallet with Noir</strong> and confirm in your wallet. Noir records which wallet owns this setup.</li>
+            <li>Choose a limit and an optional end date, then select <strong>Review and approve spending</strong>. Confirm again in your wallet to give the agent permission.</li>
+          </ol>
+        </details>
         <p className="payment-step-status"><strong>{checks?.error ? 'Status unavailable' : permissionExpired ? 'Permission expired' : spendingPermission ? 'Permission recorded' : deviceRegistered ? 'Ready to authorize' : state.initialized ? 'Test accounts created' : 'Setup needed'}</strong>
           {' · '}{checks?.error ? 'Refresh the payment setup to try again.' : spendingPermission ? `${spendingPermission.maxAmount === '0' ? 'No separate limit per payment' : `${Number(spendingPermission.maxAmount) / 1e7} XLM per payment`} · ${spendingPermission.expiresAt ? `${permissionExpired ? 'Expired' : 'Ends'} ${new Date(spendingPermission.expiresAt).toLocaleString()}` : 'No end date'}` : deviceRegistered ? 'Set a limit and approve it in your wallet.' : state.initialized ? 'Register your wallet and check its status.' : 'Create the accounts used to send and receive test payments.'}
         </p>
@@ -251,6 +275,13 @@ export function TestnetPanel({ data, focus, addSupplier }: { data: { suppliers: 
       <li id="testnet-step-escrow">
         <h3>Manage funds for team purchases</h3>
         <p>Noir escrow is where you set aside test XLM for eligible purchases. Add funds from your owner wallet or return unused funds to it. Approve each transfer in your wallet.</p>
+        <details className="payment-details"><summary>How to add or return test funds</summary>
+          <ol className="payment-guide">
+            <li>Make sure your connected wallet has test XLM. If it is new, use the Friendbot link in step 1.</li>
+            <li>Enter how much to set aside, select <strong>Review and add funds</strong>, and confirm in your wallet. Use <strong>Refresh balance</strong> to check what’s available.</li>
+            <li>To take unused test XLM back, enter an amount under <strong>Amount to return</strong>, select <strong>Review and return funds</strong>, and confirm.</li>
+          </ol>
+        </details>
         <p className="payment-step-status"><strong>{balance === null ? 'Balance unavailable' : balance > 0 ? 'Test funds available' : 'No test funds added'}</strong>
           {' · '}{balance === null ? (deviceRegistered ? 'Refresh the balance to check your funds.' : 'Complete wallet registration in step 2.') : `Last checked balance: ${balance} test XLM`}
         </p>
@@ -272,7 +303,18 @@ export function TestnetPanel({ data, focus, addSupplier }: { data: { suppliers: 
           {' · '}{state.gasKeyStored ? 'Velo checks the fee setup when a payment is sent.' : state.projectId ? 'Add the Gas Station key from your Velo project.' : 'Open Velo and paste the URL of your registered Testnet project.'}
         </p>
         {!connected && <p>{walletHint}</p>}
-        <details className="payment-details"><summary>Gas Station requirements</summary><p>In Velo, fund your Testnet relayer, enable fee sponsorship, and allow the Noir contracts.</p></details>
+        <details className="payment-details"><summary>How to connect Velo Gas Station</summary>
+          <ol className="payment-guide">
+            <li>Open <strong>Velo</strong>, connect the same Testnet wallet, then create or open your project. If the project is a draft, select <strong>Register Project On-Chain</strong> and confirm in your wallet.</li>
+            <li>Open any page inside the project. Copy the URL containing <code>/projects/…</code>, or copy the ID immediately after <code>/projects/</code>. Paste it below and select <strong>Save project</strong>.</li>
+            <li>In Velo, go to <strong>Verify → Contracts</strong> and add the Noir payment escrow contract. In <strong>Pay → Gas Station</strong>, allow that contract in the sponsorship policy.
+              {state.contracts?.paymentEscrow && <code className="payment-contract-address">{state.contracts.paymentEscrow}</code>}
+            </li>
+            <li>In <strong>Gas Station</strong>, set up and fund the Testnet fee wallet (relayer). Refresh its balance, then turn on <strong>Enable sponsorship</strong> and save the policy.</li>
+            <li>Go to <strong>Build → API Keys</strong>, generate a <strong>Gas Station · Testnet</strong> key, then paste it below and select <strong>Save key</strong>.</li>
+            <li>For a demo purchase, choose an approved supplier below and select <strong>Link demo recipient</strong>. Its website can be fictional. Only the linked demo wallet receives test XLM.</li>
+          </ol>
+        </details>
         <form className="testnet-actions" onSubmit={e => {
           e.preventDefault();
           void run('Velo project link', async () => {
@@ -312,6 +354,12 @@ export function TestnetPanel({ data, focus, addSupplier }: { data: { suppliers: 
       </li>
     </ol>
     <div role="status">{busy && <div className="toast"><LoaderCircle size={16} className="spin" aria-hidden="true"/><span>In progress: {busy}…</span></div>}</div>
-    {state.operations.length > 0 && <div className="surface-list">{state.operations.map(op => <div className="memory-note" key={op.id}><div><strong>{op.id}: {op.state}</strong><p>{op.error}</p><small>Authorization: {op.transactionHash || 'not submitted'}<br/>Merchant claim: {op.claimHash || 'not confirmed'}</small></div></div>)}</div>}
+    {state.operations.length > 0 && <div className="surface-list">{state.operations.map(op => <div className="memory-note" key={op.id}><div>
+      <strong>{op.id}: {paymentOperationLabels[op.state==='claimed'&&op.result?.status==='claimed'?'velo_claimed':op.state] || 'Check payment status'}</strong>
+      {op.error && <p>{op.error}</p>}
+      <small className="payment-contract-address">{op.identity && <>Velo tracking ID: {op.identity.requestId}<br/></>}
+        Authorization hash: {op.result?.outerTransactionHash || op.transactionHash || 'Not available'}<br/>
+        Recipient claim hash: {op.claimHash || 'Not available'}</small>
+    </div></div>)}</div>}
   </section>;
 }

@@ -1,18 +1,41 @@
 import type {Express,RequestHandler} from 'express';
 import {NoirAgentClient,TESTNET,type NoirOperation} from '@noirx402/agent-sdk';
-import {Keypair,Networks,Asset,TransactionBuilder,xdr} from '@stellar/stellar-sdk';
-import {Velo} from '@carts1024/velo-sdk';
+import {Keypair,Networks,Asset,TransactionBuilder,xdr,StrKey,scValToNative} from '@stellar/stellar-sdk';
+import {Velo,VeloError,type GasExecutionIdentity,type GasSubmitResult} from '@carts1024/velo-sdk';
 import {createHash,randomUUID} from 'node:crypto';
 import {existsSync,readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {Store} from './store.ts';
 import {dataDirectory, protect, protectedStorageReady, unprotect, workspaceStorage} from './protected-storage.ts';
 import { z } from 'zod';
-import {money,units,type Supplier} from './domain.ts';
+import {money,units,type SpendRequest,type Supplier} from './domain.ts';
 
 export const EVENT_CONTRACTS={deviceRegistry:'CB4DPMGOA374JIB2ZVD4AHW5GJKQUYNOFGRYNOJ75EFH2KCJSMHOWIRA',agentRegistry:'CBTDMJVCFQDIVWZBKAKZ2FQ3UEJNAAUFYCTJ3E4ON2MYXPLPSIXQ25JZ',paymentEscrow:'CA5S4S7QGHJHJWVJBYL3CXZXZTNGKXMNZVDAEQNN7NUXFP4D7BYK7HIX'};
 const network={...TESTNET,contracts:EVENT_CONTRACTS};
 const asset=Asset.native().contractId(Networks.TESTNET);
+export function matchesMerchantClaim(events: xdr.ContractEvent[], merchant: string, amount: number) {
+ return events.some(event => {
+  const contract=event.contractId();
+  if(!contract||!Buffer.isBuffer(contract)||StrKey.encodeContract(contract)!==EVENT_CONTRACTS.paymentEscrow) return false;
+  const body=event.body().v0(), [kind, recipient]=body.topics();
+  return !!kind && !!recipient && scValToNative(kind)==='claim' &&
+    scValToNative(recipient)===merchant && scValToNative(body.data())===BigInt(amount);
+ });
+}
+function settled(op: {state:string;result?:{status:string}}) {
+ return op.state==='authorization_failed'||(op.state==='claimed'&&op.result?.status!=='claimed');
+}
+function sponsorshipFailure(error: unknown) {
+ if(!(error instanceof VeloError))return 'Check the Noir setup and Velo Gas Station settings.';
+ switch(error.code){
+  case 'contract_not_whitelisted':return 'Allow the Noir payment escrow contract in Velo’s Gas Station policy.';
+  case 'daily_cap_exceeded':return 'Velo’s Gas Station reached its daily fee cap.';
+  case 'wallet_rate_limited':return 'The payment wallet reached its Velo sponsorship limit.';
+  case 'policy_disabled':return 'Enable fee sponsorship in Velo’s Gas Station and save the policy.';
+ }
+ if(error.status===401)return 'Save a valid Testnet Gas Station key for this Velo project.';
+ return 'Check that the Velo Gas Station relayer is funded and sponsorship is enabled for the Noir payment escrow.';
+}
 function localProject(): { owner: string; projectId: string } {
  const projectFile=resolve(dataDirectory(),'testnet-project.json');
  if(!existsSync(projectFile))return {owner:'',projectId:''};
@@ -40,7 +63,11 @@ export function parseAgentSettings(input: unknown, now = Date.now()) {
   return { ...settings, maxAmount: settings.maxAmount === null ? null : money(units(settings.maxAmount)) };
 }
 
-export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner:RequestHandler,checkpoint?: () => Promise<void>){
+type PaymentRecovery = {
+ getGasStatus?: (identity:GasExecutionIdentity)=>Promise<GasSubmitResult>;
+ getTransaction?: NoirAgentClient['server']['getTransaction'];
+};
+export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner:RequestHandler,checkpoint?: () => Promise<void>, recovery:PaymentRecovery={}){
  const noir=new NoirAgentClient({network});let busy=false;
  type Project = { owner: string; projectId: string };
  type WalletConfig = { owner: string; deviceHash: string; asset: string; contracts: typeof EVENT_CONTRACTS; agent?: string; merchant?: string };
@@ -129,7 +156,7 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   return checks;
  }
  function hasUnsettledPayment() {
-  return store.list<{ state: string }>('chain-operations').some(operation => operation.state !== 'claimed');
+  return store.list<{state:string;result?:{status:string}}>('chain-operations').some(operation => !settled(operation));
  }
  function assertIdle() {
   if(busy)throw new Error('Wait for the current Testnet operation to finish.');
@@ -139,12 +166,57 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   busy=true;
   try { await handler(req,res,next); } finally { busy=false; }
  };
- async function settleClaim(op:any,r:any,actor:string) {
+ async function settleClaim(op:any,r:SpendRequest,actor:string) {
   const c=config();
-  const finish=()=>{op.state='claimed';store.put('chain-operations',r.id,op);r.status='paid';r.receipt=op.claimHash;store.saveRequest(r);store.db.prepare("UPDATE commitments SET state='paid' WHERE request_id=?").run(r.id);store.event('Testnet payment claimed',`Authorization ${op.result.transactionHash}; merchant claim ${op.claimHash}.`,actor,r.id,'chain');return op;};
-  if(op.state==='claimed')return op;
-  if(op.claimHash){const result=await noir.server.getTransaction(op.claimHash);if(result.status==='SUCCESS')return finish();op.state=result.status==='FAILED'?'claim_failed':'claim_confirmation_pending';store.put('chain-operations',r.id,op);return op;}
-  const merchant=getKey(keyName(c,'merchant'));const claimXdr=await noir.prepare(merchant.publicKey(),{kind:'claim',token:asset});const claimTx=TransactionBuilder.fromXDR(claimXdr,Networks.TESTNET);if(!('source' in claimTx)||claimTx.source!==c.merchant)throw new Error('Unexpected merchant transaction.');claimTx.sign(merchant);op.claimHash=claimTx.hash().toString('hex');op.state='claim_submitting';store.put('chain-operations',r.id,op);await checkpoint?.();await noir.submit(claimTx.toXDR());return finish();
+  const finish=()=>{op.state='claimed';delete op.error;store.db.exec('BEGIN IMMEDIATE');try{store.put('chain-operations',r.id,op);r.status='paid';r.receipt=op.claimHash;store.saveRequest(r);store.db.prepare("UPDATE commitments SET state='paid' WHERE request_id=?").run(r.id);store.event('Testnet payment claimed',`Authorization ${op.result.transactionHash}; merchant claim ${op.claimHash}.`,actor,r.id,'chain');store.db.exec('COMMIT');}catch(error){store.db.exec('ROLLBACK');throw error;}return op;};
+  if(r.status==='paid')return op;
+  if(!c.merchant)throw new Error('The saved demo recipient is unavailable.');
+  if(!op.claimHash){
+   // Noir claims the merchant's entire pending balance. Never assign a
+   // combined payout to one request.
+   if(await noir.getPendingBalance(c.merchant)!==BigInt(r.amount)){
+    op.state='claim_needs_review';store.put('chain-operations',r.id,op);return op;
+   }
+   const merchant=getKey(keyName(c,'merchant'));const claimXdr=await noir.prepare(merchant.publicKey(),{kind:'claim',token:asset});const claimTx=TransactionBuilder.fromXDR(claimXdr,Networks.TESTNET);if(!('source' in claimTx)||claimTx.source!==c.merchant)throw new Error('Unexpected merchant transaction.');claimTx.sign(merchant);op.claimHash=claimTx.hash().toString('hex');op.state='claim_submitting';store.put('chain-operations',r.id,op);await checkpoint?.();await noir.submit(claimTx.toXDR());
+  }
+  const result=await (recovery.getTransaction?.(op.claimHash) ?? noir.server.getTransaction(op.claimHash));
+  if(result.status==='SUCCESS'){
+   const meta=result.resultMetaXdr;
+   const legacyEvents=meta.switch()===3 ? meta.v3().sorobanMeta()?.events() ?? [] : [];
+   if(matchesMerchantClaim([...result.events.contractEventsXdr.flat(),...legacyEvents],c.merchant,r.amount))return finish();
+  }
+  op.state=result.status==='FAILED'?'claim_failed':result.status==='SUCCESS'?'claim_needs_review':'claim_confirmation_pending';
+  store.put('chain-operations',r.id,op);return op;
+ }
+ function failAuthorization(op:any,r:SpendRequest,actor:string,detail:string) {
+  op.state='authorization_failed';
+  op.error=detail;
+  store.db.exec('BEGIN IMMEDIATE');
+  try{
+   store.put('chain-operations',r.id,op);
+   r.status='payment_failed';store.saveRequest(r);
+   store.db.prepare("DELETE FROM commitments WHERE request_id=? AND state='reserved'").run(r.id);
+   store.event('Testnet payment did not go through',detail,actor,r.id,'chain');
+   store.db.exec('COMMIT');
+  }catch(error){store.db.exec('ROLLBACK');throw error;}
+  return op;
+ }
+ async function followPayment(op:any,r:SpendRequest,actor:string,result?:GasSubmitResult) {
+  // Once Velo's success is saved, later checks can go straight to Stellar.
+  if(op.result?.status==='succeeded')return settleClaim(op,r,actor);
+  if(!op.identity)return op;
+  result ??= await (recovery.getGasStatus?.(op.identity) ?? gas().gas.getStatus(op.identity));
+  op.result=result;
+  // Velo also calls an in-progress sponsorship "claimed". Keep that state
+  // distinct from a completed merchant claim.
+  op.state=result.status==='claimed'?'velo_claimed':result.status;
+  delete op.error;
+  if(!result.reconciliationRequired&&(result.status==='failed'||result.status==='cancelled')){
+   return failAuthorization(op,r,actor,'Velo confirmed the authorization did not succeed. Reserved budget was released.');
+  }
+  store.put('chain-operations',r.id,op);
+  if(result.status==='succeeded'){await checkpoint?.();return settleClaim(op,r,actor);}
+  return op;
  }
  app.get('/api/testnet',auth,owner,(_req,res)=>res.json(safeStatus()));
  app.post('/api/testnet/wallet',auth,owner,(req,res)=>{
@@ -241,11 +313,15 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   assertIdle();
   busy=true;
   try{
-   let r=store.request(id);if(!r||r.mode!=='testnet')throw new Error('Choose a Testnet purchase request.');const existing=store.get<any>('chain-operations',id);if(existing?.state==='claimed')return existing;
+   let r=store.request(id);if(!r||r.mode!=='testnet')throw new Error('Choose a Testnet purchase request.');const existing=store.get<any>('chain-operations',id);
+   if(existing){
+    if(r.status!=='authorized')return existing;
+    if(!existing.identity)throw new Error('No Velo tracking ID was saved. Compare the authorization hash in Connections with the Gas Station receipt before attempting another payment.');
+    return await followPayment(existing,r,actor);
+   }
    if(automatic && (existing || !store.canAutoApprove(r)))throw new Error('This purchase needs owner review under the current rules.');
    const c=config();const supplier=store.get<Supplier>('suppliers',r.supplierId);const binding=supplier&&store.get<{merchant:string}>('testnet-supplier',c.owner+':'+supplier.id);if(!c.agent||!c.merchant||!supplier?.approved||(binding?.merchant||supplier.destination)!==c.merchant)throw new Error('Bind an approved supplier to the demo merchant first.');
    const velo=gas();
-   if(existing){if(!existing.identity)throw new Error('An earlier operation requires manual reconciliation; no duplicate submission was made.');const result=await velo.gas.getStatus(existing.identity);existing.result=result;existing.state=result.status;store.put('chain-operations',id,existing);return result.status==='succeeded'?await settleClaim(existing,r,actor):existing;}
    if(!note.trim())throw new Error('Add a decision note.');const failed=store.checks(r).filter(v=>!v.pass);if(failed.length)throw new Error(failed.map(v=>v.detail).join(' '));if(!['needs_review','blocked'].includes(r.status))throw new Error('Request is not available for payment.');
    const agent=getKey(keyName(c,'agent'));const check=await noir.checkPayment({deviceHash:c.deviceHash,agent:agent.publicKey(),asset,amount:BigInt(r.amount)});if(!check.ok)throw new Error(`Noir refused payment: ${check.reason}`);
    const nonce=BigInt(Math.max(Date.now(),Number(store.setting('chain-nonce')||0)+1));const op:any={id,nonce:String(nonce),state:'reserved',createdAt:new Date().toISOString()};
@@ -269,20 +345,53 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
     store.db.exec('ROLLBACK');
     throw error;
    }
+   let handedOff=false;
    try{
     const unsigned=await noir.prepare(agent.publicKey(),{kind:'authorize',deviceHash:c.deviceHash,merchant:c.merchant,asset,amount:BigInt(r.amount),nonce});const tx=TransactionBuilder.fromXDR(unsigned,Networks.TESTNET);if(!('source' in tx)||tx.source!==agent.publicKey())throw new Error('Unexpected agent transaction.');tx.sign(agent);op.transactionHash=tx.hash().toString('hex');store.put('chain-operations',id,op);
     await checkpoint?.();
     const reservation=await velo.gas.sponsor(tx.toXDR(),{idempotencyKey:'allowance:'+id,correlationId:id});op.identity={requestId:reservation.requestId,transactionHash:reservation.transactionHash};op.state='sponsored';store.put('chain-operations',id,op);
     await checkpoint?.();
-    const result=await velo.gas.submit({...op.identity,transactionXdr:tx.toXDR()});op.result=result;op.state=result.status;store.put('chain-operations',id,op);
-    return result.status==='succeeded'?await settleClaim(op,r,actor):op;
-   }catch(e){op.error=e instanceof Error?e.message:'Testnet operation failed.';op.state='needs_reconciliation';store.put('chain-operations',id,op);throw new Error(op.error+' The allowance reservation remains held; no automatic retry was made.');}
+    handedOff=true;
+    const result=await velo.gas.submit({...op.identity,transactionXdr:tx.toXDR()});
+    return await followPayment(op,r,actor,result);
+   }catch(e){
+    if(!handedOff){
+     if(e instanceof VeloError && e.code && /^[a-z0-9_]{1,70}$/.test(e.code))op.providerCode=e.code;
+     return failAuthorization(op,r,actor,'Payment could not start. '+sponsorshipFailure(e)+' No payment was submitted and the budget was released.');
+    }
+    op.error='The payment status could not be confirmed. Allowance will check the existing transaction.';
+    op.state='needs_reconciliation';store.put('chain-operations',id,op);return op;
+   }
   }finally{busy=false;}
  }
+ const checkedAt=new Map<string,number>();
+ function paymentProgress(r: SpendRequest) {
+  if(r.status!=='authorized'&&r.status!=='payment_failed')return undefined;
+  const op=store.get<any>('chain-operations',r.id);
+  if(r.status==='payment_failed')return {canCheck:false, label:'Payment failed', detail:op?.error || 'The authorization did not succeed. Your budget is no longer reserved.'};
+  if(!op?.identity)return {canCheck:false,label:'Payment needs investigation',detail:'No Velo tracking ID was saved. The owner can compare the authorization hash in Connections with Velo’s receipt.'};
+  if(op.state==='claim_failed'||op.state==='claim_needs_review')return {canCheck:false,label:'Recipient claim needs attention',detail:'The authorization succeeded, but Allowance could not confirm a claim for this exact amount. The budget remains reserved.'};
+  if(op.result?.status==='succeeded')return {canCheck:true,label:'Waiting for recipient claim',detail:'Velo confirmed authorization. Allowance is checking for the recipient’s Testnet receipt.'};
+  return {canCheck:true,label:'Waiting for Velo confirmation',detail:'Approval is recorded. Allowance is checking the existing transaction before it can confirm payment.'};
+ }
+ app.post('/api/requests/:id/payment-status',auth,async(req,res)=>{
+  const r=store.request(String(req.params.id));
+  if(!r||(res.locals.person.role!=='owner'&&r.requesterId!==res.locals.person.id))return res.status(404).json({error:'Request not found.'});
+  const op=store.get<any>('chain-operations',r.id);
+  if(!paymentProgress(r)?.canCheck||!op||busy)return res.json({updated:false});
+  const now=Date.now();
+  if((checkedAt.get(r.id)||0)>now-12000)return res.json({updated:false});
+  for(const [id,time] of checkedAt)if(time<=now-12000)checkedAt.delete(id);
+  checkedAt.set(r.id,now);
+  busy=true;
+  try{await followPayment(op,r,'Payment status check');res.json({updated:true});}
+  catch{res.status(502).json({error:'Payment status is temporarily unavailable. No replacement payment was sent.'});}
+  finally{busy=false;}
+ });
  app.post('/api/requests/:id/testnet',auth,owner,async(req,res)=>{
   if(busy)return res.status(409).json({error:'Another chain operation is running. Wait, then reconcile its status.'});
   const op=await approveRequest(String(req.params.id),res.locals.person.name,String(req.body?.note||''));
-  res.status(op.state==='claimed'?200:202).json(op);
+  res.status(settled(op)?200:202).json(op);
  });
- return { approveRequest, saveAgentSettings, setupStatus: safeStatus };
+ return { approveRequest, saveAgentSettings, setupStatus: safeStatus, paymentProgress };
 }

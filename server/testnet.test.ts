@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {Account,Asset,Keypair,Networks,Operation,TransactionBuilder} from '@stellar/stellar-sdk';
-import {validateOwnerSetupSignature,EVENT_CONTRACTS,parseAgentSettings} from './testnet.ts';
+import express from 'express';
+import {Store} from './store.ts';
+import type {SpendRequest} from './domain.ts';
+import type {GasSubmitResult} from '@carts1024/velo-sdk';
+import {Account,Address,Asset,Keypair,Networks,Operation,TransactionBuilder,StrKey,nativeToScVal,xdr} from '@stellar/stellar-sdk';
+import {validateOwnerSetupSignature,EVENT_CONTRACTS,parseAgentSettings,matchesMerchantClaim,installTestnet} from './testnet.ts';
 
 test('owner setup signatures bind the exact prepared transaction and Testnet',()=>{
  const owner=Keypair.random(),recipient=Keypair.random();
@@ -19,4 +23,77 @@ test('Noir agent terms support an explicit cap, no cap and no expiry', () => {
   assert.deepEqual(parseAgentSettings({ ...defaults, maxAmount: null, expiresAt: null }, now), { label: 'Studio agent', maxAmount: null, expiresAt: null });
   assert.throws(() => parseAgentSettings({ ...defaults, expiresAt: '2026-11-05T23:59:59Z' }, now), /future/);
   assert.throws(() => parseAgentSettings({ ...defaults, maxAmount: '-1' }, now), /positive/);
+});
+
+const event=(contract:string,recipient:string,amount:bigint)=>xdr.ContractEvent.fromXDR(new xdr.ContractEvent({
+  ext:new xdr.ExtensionPoint(0),contractId:StrKey.decodeContract(contract) as unknown as xdr.Hash,
+  type:xdr.ContractEventType.contract(),body:new xdr.ContractEventBody(0,new xdr.ContractEventV0({
+   topics:[nativeToScVal('claim',{type:'symbol'}),new Address(recipient).toScVal()],data:nativeToScVal(amount,{type:'i128'}),
+  })),
+}).toXDR());
+
+test('a successful claim must match the Noir escrow, recipient and exact purchase amount',()=>{
+ const merchant=Keypair.random().publicKey();
+ assert.equal(matchesMerchantClaim([event(EVENT_CONTRACTS.paymentEscrow,merchant,150000000n)],merchant,150000000),true);
+ assert.equal(matchesMerchantClaim([event(EVENT_CONTRACTS.paymentEscrow,merchant,250000000n)],merchant,150000000),false);
+ assert.equal(matchesMerchantClaim([event(EVENT_CONTRACTS.agentRegistry,merchant,150000000n)],merchant,150000000),false);
+ assert.equal(matchesMerchantClaim([event(EVENT_CONTRACTS.paymentEscrow,Keypair.random().publicKey(),150000000n)],merchant,150000000),false);
+});
+
+test('existing Velo handoff recovers once, and only a verified Noir claim settles the budget',async()=>{
+ const store=new Store(':memory:');
+ const merchant=Keypair.random().publicKey();
+ store.put('testnet','config',{owner:Keypair.random().publicKey(),merchant});
+ const stub=(_req:any,_res:any,next:any)=>next();
+ const receipt='a'.repeat(64), hash='b'.repeat(64);
+ const result=(status:GasSubmitResult['status'],reconciliationRequired=false)=>({
+  object:'gas_submit_result' as const,requestId:'test-reservation',transactionHash:hash,status,
+  outerTransactionHash:null,reservedStroops:'100',actualFeeStroops:null,expiresAt:new Date().toISOString(),reconciliationRequired,
+ });
+ const stages=[result('claimed'),result('submission_unknown',true),result('succeeded'),result('failed',true),result('failed')];
+ let receiptVisible=false, statusChecks=0;
+ const payment=installTestnet(express(),store,stub,stub,undefined,{
+  getGasStatus:async identity=>{
+   assert.equal(identity.transactionHash,hash);
+   statusChecks++;
+   return stages.shift()!;
+  },
+  getTransaction:async txHash=>{
+   assert.equal(txHash,receipt);
+   const response=receiptVisible?{
+    status:'SUCCESS',resultMetaXdr:{switch:()=>4},
+    events:{contractEventsXdr:[[event(EVENT_CONTRACTS.paymentEscrow,merchant,10000000n)]]},
+   }:{status:'NOT_FOUND'};
+   return response as unknown as Awaited<ReturnType<import('@noirx402/agent-sdk').NoirAgentClient['server']['getTransaction']>>;
+  },
+ });
+ const reserved=(id:string,claimHash?:string)=>{
+  const r:SpendRequest={...store.request('REQ-1044')!,id,mode:'testnet',status:'authorized',idempotencyKey:id,amount:10000000,receipt:null};
+  store.create(r);
+  store.db.prepare("INSERT INTO commitments VALUES(?,?,?,'reserved')").run(id,r.projectId,r.amount);
+  store.put('chain-operations',id,{id,state:'claimed',result:result('claimed'),identity:{requestId:'test-reservation',transactionHash:hash},claimHash});
+  return r;
+ };
+ try {
+  const r=reserved('RECOVERY-1',receipt);
+  const failed=reserved('RECOVERY-2');
+  const total=store.committed(r.projectId);
+  assert.equal((await payment.approveRequest(r.id,'Tester','')).state,'velo_claimed');
+  assert.equal((await payment.approveRequest(r.id,'Tester','')).state,'submission_unknown');
+  assert.equal((await payment.approveRequest(r.id,'Tester','')).state,'claim_confirmation_pending');
+  assert.equal(store.request(r.id)?.status,'authorized');
+  assert.equal(store.committed(r.projectId),total);
+  receiptVisible=true;
+  assert.equal((await payment.approveRequest(r.id,'Tester','')).state,'claimed');
+  assert.equal((await payment.approveRequest(r.id,'Tester','')).state,'claimed');
+  assert.equal(statusChecks,3);
+  assert.equal(store.request(r.id)?.receipt,receipt);
+  assert.equal(store.events().filter(e=>e.requestId===r.id&&e.title==='Testnet payment claimed').length,1);
+  await payment.approveRequest(failed.id,'Tester','');
+  assert.equal(store.request(failed.id)?.status,'authorized');
+  assert.equal(store.committed(r.projectId),total);
+  await payment.approveRequest(failed.id,'Tester','');
+  assert.equal(store.request(failed.id)?.status,'payment_failed');
+  assert.equal(store.committed(r.projectId),total-failed.amount);
+ }finally{store.close();}
 });

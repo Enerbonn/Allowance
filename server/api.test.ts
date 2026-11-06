@@ -20,6 +20,8 @@ test('API isolates identities, owner controls, and cross-origin writes', async (
     const bootstrap = await (await fetch(base + '/bootstrap', { headers: memberHeaders })).json();
     assert.equal(bootstrap.person.id, 'maya'); assert.ok(bootstrap.requests.every((r: any) => r.requesterId === 'maya')); assert.ok(bootstrap.tasks.every((t: any) => t.assigneeId === 'maya'));
     assert.equal((await fetch(base + '/requests/REQ-1043/cancel', { method: 'POST', headers: memberHeaders })).status, 404);
+    assert.equal((await fetch(base + '/requests/REQ-1043/payment-status', { method: 'POST', headers: memberHeaders })).status, 404);
+    assert.equal((await fetch(base + '/requests/REQ-1044/payment-status', { method: 'POST', headers: memberHeaders })).status, 200);
     assert.equal((await fetch(base + '/requests/REQ-1044/decision', { method: 'POST', headers: memberHeaders, body: JSON.stringify({ action: 'approve', note: 'Attempt' }) })).status, 403);
     assert.equal((await fetch(base + '/policy', { method: 'PUT', headers: memberHeaders, body: '{}' })).status, 403);
     assert.equal((await fetch(base + '/session', { method: 'POST', headers: { ...headers, origin: 'https://untrusted.example' }, body: JSON.stringify({ email: 'owner@allowance.example', role: 'owner', code:'owner-test-code' }) })).status, 403);
@@ -46,6 +48,13 @@ test('API isolates identities, owner controls, and cross-origin writes', async (
     const approval = await fetch(approvalUrl, { method: 'POST', headers: ownerHeaders });
     assert.equal(approval.status, 200);
     assert.deepEqual(await approval.json(), { ...supplier, approved: true });
+    const quoteUrl=base+'/suppliers/'+supplier.id+'/quote-websites';
+    const quoteHosts={hosts:['fictional-checkout.example']};
+    assert.equal((await fetch(quoteUrl,{method:'PUT',headers:memberHeaders,body:JSON.stringify(quoteHosts)})).status,403);
+    assert.equal((await fetch(quoteUrl,{method:'PUT',headers:ownerHeaders,body:JSON.stringify({hosts:['https://fictional-checkout.example/quote']})})).status,400);
+    const savedQuote=await fetch(quoteUrl,{method:'PUT',headers:ownerHeaders,body:JSON.stringify(quoteHosts)});
+    assert.equal(savedQuote.status,200);
+    assert.deepEqual((await savedQuote.json()).quoteHosts,quoteHosts.hosts);
     const createdMember = await fetch(base + '/setup/people', { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ name: 'Demo Researcher', email: 'researcher@allowance.example', title: 'Research contractor' }) });
     assert.equal(createdMember.status, 201); const member = await createdMember.json(); assert.equal(member.role, 'member');
     const createdProject = await fetch(base + '/setup/projects', { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ name: 'Demo research project', description: 'A synthetic project for access verification.', budget: '150' }) });

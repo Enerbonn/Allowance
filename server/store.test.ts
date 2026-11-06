@@ -112,6 +112,14 @@ test('supplier category and quote host constrain automatic payments', () => {
   store.create(mismatchedQuote);
   assert.equal(store.setReview(misclassified.id, reviewed).status, 'blocked');
   assert.equal(store.setReview(mismatchedQuote.id, reviewed).status, 'needs_review');
+  const configured = { ...store.request(mismatchedQuote.id)!, mode: 'testnet' as const, evidenceUrl: 'https://fictional-checkout.example/quote' };
+  store.put('policy', 'main', { ...store.policy(), autoTestnet: true });
+  assert.equal(store.canAutoApprove(configured), false);
+  const supplier=store.suppliers().find(s=>s.id===configured.supplierId)!;
+  store.put('suppliers',supplier.id,{...supplier,quoteHosts:['fictional-checkout.example']});
+  assert.equal(store.canAutoApprove(configured), true);
+  assert.equal(store.canAutoApprove({...configured,evidenceUrl:'https://fictional-checkout.example.evil.example/quote'}),false);
+  assert.equal(store.canAutoApprove({...configured,evidenceUrl:'https://fictional-checkout.example@evil.example/quote'}),false);
   assert.equal(store.committed('launch'), units('28'));
   store.close();
 });

@@ -35,6 +35,9 @@
 .testnet-steps .payment-step-status{padding:10px 12px;background:var(--pale,#e7f1ea);border-radius:7px}
 .payment-details{font-size:12px;margin-top:14px}
 .payment-details summary{cursor:pointer;width:fit-content}
+.payment-guide{margin:10px 0 4px;padding-inline-start:22px;line-height:1.6;max-width:72ch}
+.payment-guide li+li{margin-top:7px}
+.payment-contract-address{display:block;overflow-wrap:anywhere;margin-top:4px}
 .payment-subheading{margin:24px 0 8px}
 .payment-feedback p{overflow-wrap:anywhere}
 .agent-terms input:not([type=checkbox]){padding:10px;border:1px solid var(--border);border-radius:7px;max-width:100%;min-width:0}

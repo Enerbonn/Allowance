@@ -144,7 +144,7 @@ export function createApp(store: Store, options: AppOptions = {}, dispatch?: exp
       tasks,
       suppliers: store.suppliers(),
       policy: store.policy(),
-      requests: requests.map(r => ({ ...r, checks: store.checks(r) })),
+      requests: requests.map(r => ({ ...r, checks: store.checks(r), paymentProgress: testnet.paymentProgress(r) })),
       events: store.events().filter(e => isOwner || (e.requestId && requests.some(r => r.id === e.requestId))),
       categories,
       ai: aiState,
@@ -185,6 +185,16 @@ export function createApp(store: Store, options: AppOptions = {}, dispatch?: exp
       store.put('suppliers', supplier.id, supplier);
       store.event('Supplier approved', supplier.name, res.locals.person.name, null, 'policy');
     }
+    res.json(supplier);
+  });
+  app.put('/api/suppliers/:id/quote-websites', auth, owner, (req,res)=>{
+    const supplier=store.get<Supplier>('suppliers',String(req.params.id));
+    if(!supplier?.approved)return res.status(404).json({error:'Choose an approved supplier first.'});
+    const hosts=z.array(z.string().trim().toLowerCase().max(253)
+      .regex(/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/, 'Enter a website hostname, such as checkout.example.com.')).max(5).parse(req.body.hosts);
+    supplier.quoteHosts=[...new Set(hosts)];
+    store.put('suppliers',supplier.id,supplier);
+    store.event('Supplier quote websites updated',supplier.name,res.locals.person.name,null,'policy');
     res.json(supplier);
   });
   app.post('/api/setup/:kind', auth, owner, (req, res) => {

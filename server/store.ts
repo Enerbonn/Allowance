@@ -116,9 +116,13 @@ export class Store {
     return !policy.requireEvidence || this.quoteMatchesSupplier(r);
   }
   quoteMatchesSupplier(r: SpendRequest) {
-    const supplierHost = this.get<Supplier>('suppliers', r.supplierId)?.domain.toLowerCase();
-    const quoteHost = URL.canParse(r.evidenceUrl) ? new URL(r.evidenceUrl).hostname.toLowerCase() : '';
-    return !!supplierHost && (quoteHost === supplierHost || quoteHost.endsWith('.' + supplierHost));
+    const supplier = this.get<Supplier>('suppliers', r.supplierId);
+    const normalize = (host:string) => host.toLowerCase().replace(/\.$/, '');
+    const quoteHost = URL.canParse(r.evidenceUrl) ? normalize(new URL(r.evidenceUrl).hostname) : '';
+    if(!supplier?.approved || !quoteHost) return false;
+    const primary = normalize(supplier.domain);
+    return quoteHost===primary || quoteHost.endsWith('.'+primary) ||
+      (supplier.quoteHosts || []).some(host=>normalize(host)===quoteHost);
   }
   setReview(id: string, ai: Review) {
     const r = this.request(id)!;
@@ -132,6 +136,8 @@ export class Store {
       } else if (this.trustedAssessment(r) && ai.recommendation === 'decline') {
         r.status = 'declined';
         r.reasons.push(ai.summary);
+      } else if (this.policy().requireEvidence && !this.quoteMatchesSupplier(r)) {
+        r.reasons.push('Automatic approval needs a quote link on the selected supplier’s approved website. Use a matching link, or ask the owner to approve the quote website.');
       }
     }
     this.saveRequest(r);
