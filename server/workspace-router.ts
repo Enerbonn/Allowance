@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { RequestHandler } from 'express';
 import { createApp, type AppOptions } from './app.ts';
-import { emailSchema, type Person } from './domain.ts';
+import { emailSchema, type Event, type Person, type SpendRequest } from './domain.ts';
 import { dataDirectory, workspaceStorage } from './protected-storage.ts';
 import { Store } from './store.ts';
 import { matchesMemberLogin, ownerSignupSchema, setAccessCode, validOwnerSetupToken, verifyAccessCode } from './workspace.ts';
@@ -12,7 +12,10 @@ import { matchesMemberLogin, ownerSignupSchema, setAccessCode, validOwnerSetupTo
 const workspaceId = (email: string) => createHash('sha256').update(email).digest('hex');
 const demoOwnerEmail = 'owner@allowance.example';
 
-export function provisionHostedDemo(primary: Store, ownerCode?: string, memberCode?: string) {
+const demoRecordKinds = new Set(['people', 'policy', 'projects', 'tasks', 'suppliers', 'chat', 'memory']);
+type DemoRecords = { records: {kind: string; id: string; data: unknown}[]; requests: SpendRequest[]; events: Event[] };
+
+export function provisionHostedDemo(primary: Store, ownerCode?: string, memberCode?: string, recorded?: DemoRecords) {
   if (!ownerCode && !memberCode) return;
   if (!ownerCode || !memberCode || [ownerCode, memberCode].some(code => code.length < 8 || code.length > 128)) {
     console.warn('Hosted demo needs both access codes, each 8 to 128 characters.');
@@ -21,18 +24,37 @@ export function provisionHostedDemo(primary: Store, ownerCode?: string, memberCo
   const path = resolve(dataDirectory(), 'workspaces', workspaceId(demoOwnerEmail), 'allowance.sqlite');
   const primaryIsDemo = primary.get<Person>('people', 'owner')?.email === demoOwnerEmail;
   const exists = primaryIsDemo || existsSync(path);
-  const store = primaryIsDemo ? primary : new Store(path, { sampleData: true, testnetSamples: true });
+  const store = primaryIsDemo ? primary : new Store(path, { sampleData: !recorded, testnetSamples: true });
   try {
     if (exists) {
       if (!verifyAccessCode(store, 'owner', ownerCode) || !verifyAccessCode(store, 'maya', memberCode)) {
         console.warn('Hosted demo workspace already exists. Its credentials and records were kept.');
+        return;
       }
-      return;
+      if (!recorded || store.setting('local-demo-records-imported')) return;
     }
     store.db.exec('BEGIN IMMEDIATE');
     try {
-      setAccessCode(store, 'owner', ownerCode);
-      setAccessCode(store, 'maya', memberCode);
+      if (recorded) {
+        for (const {kind, id, data} of recorded.records) {
+          if (!demoRecordKinds.has(kind) || (exists && store.get(kind, id))) continue;
+          store.put(kind, id, kind === 'policy' ? { ...(data as object), autoTestnet: false } : data);
+        }
+        const addRequest = store.db.prepare('INSERT OR IGNORE INTO requests VALUES(?,?,?)');
+        for (const request of recorded.requests) {
+          if (request.mode !== 'testnet' || request.receipt || request.evidenceId ||
+              !['declined', 'needs_review', 'blocked', 'cancelled'].includes(request.status)) continue;
+          addRequest.run(request.id, request.idempotencyKey, JSON.stringify(request));
+        }
+        const addEvent = store.db.prepare('INSERT OR IGNORE INTO events VALUES(?,?)');
+        for (const event of recorded.events) addEvent.run(event.id, JSON.stringify(event));
+        store.setSetting('workspace-kind', 'sample');
+        store.setSetting('local-demo-records-imported', '1');
+      }
+      if (!exists) {
+        setAccessCode(store, 'owner', ownerCode);
+        setAccessCode(store, 'maya', memberCode);
+      }
       store.db.exec('COMMIT');
     } catch (error) {
       store.db.exec('ROLLBACK');

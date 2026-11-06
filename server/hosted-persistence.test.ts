@@ -23,6 +23,13 @@ test('Postgres restores signup, sessions and evidence and fences an older writer
     process.env.ALLOWANCE_DATA_DIR = persistence.directory;
     const primary = new Store(resolve(persistence.directory, 'allowance.sqlite'), { sampleData: false });
     provisionHostedDemo(primary, demoOwner.code, demoMember.code);
+    provisionHostedDemo(primary, demoOwner.code, demoMember.code, {
+      records: [
+        { kind: 'chat', id: 'imported-chat', data: { id: 'imported-chat', role: 'assistant', personId: 'owner', text: 'Imported example' } },
+        { kind: 'testnet', id: 'config', data: { owner: 'exclude' } },
+      ],
+      requests: [], events: [],
+    });
     const { app, closeWorkspaces } = createWorkspaceApp(primary, { persistence });
     await persistence.checkpoint();
     const server = app.listen(0, '127.0.0.1');
@@ -54,6 +61,8 @@ test('Postgres restores signup, sessions and evidence and fences an older writer
     const demoCookie = getCookie(demoLogin);
     const sample = await (await first('/bootstrap', undefined, demoCookie)).json();
     assert.ok(sample.projects.length > 0 && sample.requests.length > 0);
+    assert.equal(sample.messages.filter((message: {id: string}) => message.id === 'imported-chat').length, 1);
+    assert.equal((await (await first('/testnet', undefined, demoCookie)).json()).owner, '');
     assert.ok(sample.requests.every((request: {mode: string; receipt: string | null}) => request.mode === 'testnet' && request.receipt === null));
     const addedProject = await first('/setup/projects', { name: 'Keep my demo project', description: 'Saved during testing', budget: '20' }, demoCookie);
     assert.equal(addedProject.status, 201);

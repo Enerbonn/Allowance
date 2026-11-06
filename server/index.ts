@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { Store } from './store.ts';
 import { createWorkspaceApp, provisionHostedDemo } from './workspace-router.ts';
 import { resolve } from 'node:path';
@@ -32,7 +32,9 @@ if (persistence) process.env.ALLOWANCE_DATA_DIR = persistence.directory;
 
 const store = new Store(process.env.ALLOWANCE_DB || resolve(dataDirectory(), 'allowance.sqlite'), { sampleData: !hostedOrigin && process.env.ALLOWANCE_SAMPLE_DATA === '1' });
 if (persistence) {
-  provisionHostedDemo(store, process.env.ALLOWANCE_DEMO_OWNER_CODE, process.env.ALLOWANCE_DEMO_MEMBER_CODE);
+  const demoPath = '/etc/secrets/allowance-demo-records.json';
+  const demoRecords = existsSync(demoPath) ? JSON.parse(readFileSync(demoPath, 'utf8')) : undefined;
+  provisionHostedDemo(store, process.env.ALLOWANCE_DEMO_OWNER_CODE, process.env.ALLOWANCE_DEMO_MEMBER_CODE, demoRecords);
 }
 const { app, closeWorkspaces } = createWorkspaceApp(store, { persistence });
 await persistence?.checkpoint();
