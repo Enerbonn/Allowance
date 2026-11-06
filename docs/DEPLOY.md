@@ -22,7 +22,7 @@ Vercel serves the browser app and forwards its API calls to Render. Render runs 
    | ALLOWANCE_PUBLIC_ORIGIN | The permanent Vercel HTTPS origin from step 1 |
    | ALLOWANCE_PROXY_TOKEN | The random token from your clipboard. Paste the same value in Vercel later |
 
-   Render generates ALLOWANCE_OWNER_SETUP_TOKEN and ALLOWANCE_STORAGE_KEY. Keep both in Render. The setup token protects first signup. The storage key protects Testnet agent, demo merchant and Gas credentials on disk. Keep an encrypted backup of the disk and store the encryption key separately.
+   Render generates ALLOWANCE_OWNER_SETUP_TOKEN and ALLOWANCE_STORAGE_KEY. Keep both in Render. The setup token is used by the legacy setup API. The owner signup form uses a name, email and password. The storage key protects Testnet agent, demo merchant and Gas credentials on disk. Keep an encrypted backup of the disk and store the encryption key separately.
 3. If you want the assistant online, set GEMINI_API_KEY in Render. A Relmio and n8n instance on your laptop is a separate local setup. A hosted n8n workflow is optional and needs an HTTPS webhook accessible from Render plus its own ALLOWANCE_N8N_TOKEN. [Assistant setup](AI-SETUP.md)
 4. Wait until Render marks the service live. Open the service's /api/health endpoint and look for ok: true.
 
@@ -54,7 +54,7 @@ Save and redeploy, then check `/api/health`. If Render reports a port scan timeo
    | ALLOWANCE_PUBLIC_ORIGIN | The exact same Vercel production origin used in Render |
    | ALLOWANCE_PROXY_TOKEN | The exact same proxy token stored in Render |
 
-2. Open the Vercel production URL and choose **Business owner**. Enter your email, a private access code and the owner setup token from Render. After signup, only an authenticated owner can add staff and issue access codes.
+2. Open the Vercel production URL and choose **Business owner**. Enter your name, email and password. After signup, only an authenticated owner can add staff and issue access codes.
 3. Add a test member and issue a code. Connect a dedicated Stellar Testnet wallet, finish the payment setup, and verify one end-to-end Testnet purchase before the demo. If you enable the assistant, verify the connection from **Connections**. Follow the [wallet walkthrough](HACKATHON.md#wallet-and-testnet-tutorial-on-windows) for Testnet.
 
 Use the production URL for this workspace. Preview URLs need a separate configured origin and backend if you want to test them with real sessions. Render's single service instance owns the disk. Back up the disk and test a restore before storing any team data you need to retain. The first deployment starts with a fresh workspace. Create fresh Testnet demo accounts there because Windows-protected keys belong to the original laptop.

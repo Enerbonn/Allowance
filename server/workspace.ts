@@ -1,4 +1,5 @@
 import type { Express, Request, RequestHandler } from 'express';
+import type { DatabaseSync } from 'node:sqlite';
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
@@ -28,10 +29,19 @@ export function setAccessCode(store:Store,id:string,code:string) {
   const salt=randomBytes(16).toString('hex'); store.put('credentials',id,{salt,hash:scryptSync(code,salt,32).toString('hex')});
   store.db.prepare('DELETE FROM sessions WHERE person_id=?').run(id);
 }
-export function verifyAccessCode(store:Store,id:string,code:string) {
-  const c=store.get<{salt:string;hash:string}>('credentials',id);
-  const hash=scryptSync(code.slice(0,128),c?.salt||'not-an-account',32);
-  return !!c && timingSafeEqual(hash,Buffer.from(c.hash,'hex'));
+type AccessHash = { salt: string; hash: string };
+function matchesAccessCode(credential: AccessHash | undefined, code: string) {
+  const hash = scryptSync(code.slice(0, 128), credential?.salt || 'not-an-account', 32);
+  return !!credential && timingSafeEqual(hash, Buffer.from(credential.hash, 'hex'));
+}
+export function verifyAccessCode(store: Store, id: string, code: string) {
+  return matchesAccessCode(store.get<AccessHash>('credentials', id), code);
+}
+export function matchesMemberLogin(db: DatabaseSync, email: string, code: string) {
+  const row = db.prepare(
+    "SELECT c.data FROM records p JOIN records c ON c.id=p.id AND c.kind='credentials' WHERE p.kind='people' AND json_extract(p.data,'$.email')=? AND json_extract(p.data,'$.role')='member' AND json_extract(p.data,'$.active')=1",
+  ).get(email) as { data: string } | undefined;
+  return !!row && matchesAccessCode(JSON.parse(row.data) as AccessHash, code);
 }
 export function publicMember(store:Store,p:Person) { return {...p,codeSet:!!store.get('credentials',p.id),spent:store.memberSpent(p.id),weeklySpent:store.weeklySpent(p.id),weeklyResetAt:manilaWeek().end,description:p.description||store.tasks().filter(t=>t.assigneeId===p.id).map(t=>t.description).join(' ')}; }
 export function assistantMember(store:Store,p:Person) {
@@ -125,7 +135,7 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
     const id=String(req.params.id);const p=store.get<Person>('people',id);if(!p||p.role==='owner')return res.status(400).json({error:'Choose a team member.'});
     if(!p.active)return res.status(409).json({error:'Restore member access before issuing a new code.'});
     if(!p.email)return res.status(400).json({error:'Add the member’s sign-in email before issuing a code.'});
-    const code='allowance_'+randomBytes(18).toString('base64url');setAccessCode(store,id,code);store.event('Member code reset',`New private access issued for ${p.name}; prior sessions ended.`,res.locals.person.name,null,'access');res.json({email:p.email,code,workspaceEmail:store.get<Person>('people','owner')?.email});
+    const code='allowance_'+randomBytes(18).toString('base64url');setAccessCode(store,id,code);store.event('Member code reset',`New private access issued for ${p.name}; prior sessions ended.`,res.locals.person.name,null,'access');res.json({email:p.email,code});
   });
   app.put('/api/team/:id/profile',o.auth,o.owner,(req,res)=>{
     const id=String(req.params.id);const p=store.get<Person>('people',id);if(!p||p.role==='owner')return res.status(400).json({error:'Choose a team member.'});

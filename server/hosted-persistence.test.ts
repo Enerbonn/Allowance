@@ -51,6 +51,11 @@ test('Postgres restores signup, sessions and evidence and fences an older writer
     const secondSignup = await first('/auth/signup', other);
     assert.equal(secondSignup.status, 200, await secondSignup.clone().text());
     const otherCookie = getCookie(secondSignup);
+    const memberEmail = 'member@example.test';
+    const memberResponse = await first('/setup/people', { name: 'Hosted Member', title: 'Designer', email: memberEmail }, otherCookie);
+    assert.equal(memberResponse.status, 201);
+    const member = await memberResponse.json();
+    const invite = await (await first('/team/' + member.id + '/code', {}, otherCookie)).json();
     const attachment = Buffer.from('%PDF-1.4\nfixture');
     const upload = await first('/evidence', { name: 'quote.pdf', mime: 'application/pdf', data: attachment.toString('base64') }, otherCookie);
     assert.equal(upload.status, 200);
@@ -60,6 +65,9 @@ test('Postgres restores signup, sessions and evidence and fences an older writer
     const second = await launch();
     active.unshift(staleWriter);
     assert.equal((await (await second('/bootstrap', undefined, ownerCookie)).json()).person.email, owner.email);
+    const memberLogin = await second('/session', { email: memberEmail, code: invite.code, role: 'member' });
+    assert.equal(memberLogin.status, 200);
+    assert.equal((await (await second('/bootstrap', undefined, getCookie(memberLogin))).json()).person.id, member.id);
     assert.equal((await (await second('/bootstrap', undefined, otherCookie)).json()).person.email, other.email);
     const download = await second('/evidence/' + id, undefined, otherCookie);
     assert.deepEqual(Buffer.from(await download.arrayBuffer()), attachment);

@@ -29,10 +29,10 @@ Open [Allowance on port 4310](http://127.0.0.1:4310/). On Windows, after the fir
 
 ### Try both roles
 
-1. Choose **Business owner → Sign up**. At **Create your owner account**, enter your name, email, and a private code of at least eight characters. An existing owner without an email can add it using their current code. Each new owner gets a separate workspace with no sample records.
+1. Choose **Business owner → Sign up**. At **Create your owner account**, enter your name, email, and a password of at least eight characters. An existing owner without an email can add it using their current code. Each new owner gets a separate workspace with no sample records.
 2. In **Team**, select **Add member** and enter the email they gave you. Use **Draft responsibilities** on that profile if you want help drafting responsibilities and spending limits. Review suggestions before applying them.
 3. In **Projects**, create a project with a budget, then assign a task to the member. In **Spending policy**, add an approved supplier and review the spending limits and evidence rules.
-4. Back in **Team**, select **Issue code** for the member and share the workspace owner email, member sign-in email and private code shown once. Open your account menu and sign out, then choose **Team member** and sign in with their email and code.
+4. Back in **Team**, select **Issue code** for the member and share the member’s sign-in email and the private code shown once. Open your account menu and sign out, then choose **Team member** and sign in with their email and code.
 5. Complete the Testnet payment setup and enable **Allow automatic Testnet payments**. Submit a request for the assigned task and approved supplier. Clear eligible requests can proceed within the automatic limit, and uncertain requests go to the owner. Open the Testnet receipt after the merchant claim is confirmed.
 
 For a prefilled demo, stop the current server and start a separate database from PowerShell. These settings apply to that terminal:
