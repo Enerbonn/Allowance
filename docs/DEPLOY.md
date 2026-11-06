@@ -26,6 +26,16 @@ Vercel serves the browser app and forwards its API calls to Render. Render runs 
 3. If you want the assistant online, set GEMINI_API_KEY in Render. A Relmio and n8n instance on your laptop is a separate local setup. A hosted n8n workflow is optional and needs an HTTPS webhook accessible from Render plus its own ALLOWANCE_N8N_TOKEN. [Assistant setup](AI-SETUP.md)
 4. Wait until Render marks the service live. Open the service's /api/health endpoint and look for ok: true.
 
+### If you created a Web Service manually
+
+Select **Docker** for the runtime and leave the Docker command override blank. In **Environment**, set the same public origin and proxy token as above. Generate a separate `ALLOWANCE_OWNER_SETUP_TOKEN` using the hex command in step 1. Run this command once to copy a different key for `ALLOWANCE_STORAGE_KEY`:
+
+~~~powershell
+node -p "require('node:crypto').randomBytes(32).toString('base64')" | Set-Clipboard
+~~~
+
+Save and redeploy, then check `/api/health`. If Render reports a port scan timeout and detects a localhost listener, check `ALLOWANCE_PUBLIC_ORIGIN` first. The Docker image supplies `/data` and reads Render's `PORT` when hosted mode is configured. A Free Web Service uses temporary storage. Use fictional data and simulated purchases because the workspace resets when Render spins down, restarts or redeploys the service. [Free Web Service limits](https://render.com/docs/free#local-files-lost-on-redeploy)
+
 ## 3. Connect the gateway and create the owner
 
 1. Set these variables in the Vercel project's **Production** environment, then redeploy the frontend.

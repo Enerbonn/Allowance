@@ -8,14 +8,17 @@ import { dataDirectory, protectedStorageReady } from './protected-storage.ts';
 if (existsSync('.env.local')) process.loadEnvFile('.env.local');
 
 const hostedOrigin = process.env.ALLOWANCE_PUBLIC_ORIGIN;
+if (process.env.RENDER === 'true' && !hostedOrigin) {
+  throw new Error('Render deployment requires ALLOWANCE_PUBLIC_ORIGIN. Set it in Render Environment to your Vercel production HTTPS URL, without a trailing slash.');
+}
 if (hostedOrigin) {
+  if (!URL.canParse(hostedOrigin)) throw new Error('Set ALLOWANCE_PUBLIC_ORIGIN to the HTTPS frontend origin.');
   const url = new URL(hostedOrigin);
   if (url.protocol !== 'https:' || url.origin !== hostedOrigin) throw new Error('Set ALLOWANCE_PUBLIC_ORIGIN to the HTTPS frontend origin.');
-  if (!process.env.ALLOWANCE_DATA_DIR || !process.env.ALLOWANCE_STORAGE_KEY || !protectedStorageReady()) {
-    throw new Error('Hosted mode requires a persistent data directory and a protected storage key.');
-  }
-  if ((process.env.ALLOWANCE_PROXY_TOKEN?.length || 0) < 24 || (process.env.ALLOWANCE_OWNER_SETUP_TOKEN?.length || 0) < 24) {
-    throw new Error('Hosted mode requires independent proxy and owner setup tokens.');
+  if (!process.env.ALLOWANCE_DATA_DIR) throw new Error('Hosted mode requires ALLOWANCE_DATA_DIR.');
+  if (!process.env.ALLOWANCE_STORAGE_KEY || !protectedStorageReady()) throw new Error('Set ALLOWANCE_STORAGE_KEY to a 32-byte base64 key.');
+  for (const name of ['ALLOWANCE_PROXY_TOKEN', 'ALLOWANCE_OWNER_SETUP_TOKEN']) {
+    if ((process.env[name]?.length || 0) < 24) throw new Error(`Set ${name} to a random token of at least 24 characters.`);
   }
   if (process.env.ALLOWANCE_PROXY_TOKEN === process.env.ALLOWANCE_OWNER_SETUP_TOKEN) throw new Error('Use different proxy and owner setup tokens.');
 }
