@@ -7,9 +7,41 @@ import { createApp, type AppOptions } from './app.ts';
 import { emailSchema, type Person } from './domain.ts';
 import { dataDirectory, workspaceStorage } from './protected-storage.ts';
 import { Store } from './store.ts';
-import { matchesMemberLogin, ownerSignupSchema, validOwnerSetupToken } from './workspace.ts';
+import { matchesMemberLogin, ownerSignupSchema, setAccessCode, validOwnerSetupToken, verifyAccessCode } from './workspace.ts';
 
 const workspaceId = (email: string) => createHash('sha256').update(email).digest('hex');
+const demoOwnerEmail = 'owner@allowance.example';
+
+export function provisionHostedDemo(primary: Store, ownerCode?: string, memberCode?: string) {
+  if (!ownerCode && !memberCode) return;
+  if (!ownerCode || !memberCode || [ownerCode, memberCode].some(code => code.length < 8 || code.length > 128)) {
+    console.warn('Hosted demo needs both access codes, each 8 to 128 characters.');
+    return;
+  }
+  const path = resolve(dataDirectory(), 'workspaces', workspaceId(demoOwnerEmail), 'allowance.sqlite');
+  const primaryIsDemo = primary.get<Person>('people', 'owner')?.email === demoOwnerEmail;
+  const exists = primaryIsDemo || existsSync(path);
+  const store = primaryIsDemo ? primary : new Store(path, { sampleData: true, testnetSamples: true });
+  try {
+    if (exists) {
+      if (!verifyAccessCode(store, 'owner', ownerCode) || !verifyAccessCode(store, 'maya', memberCode)) {
+        console.warn('Hosted demo workspace already exists. Its credentials and records were kept.');
+      }
+      return;
+    }
+    store.db.exec('BEGIN IMMEDIATE');
+    try {
+      setAccessCode(store, 'owner', ownerCode);
+      setAccessCode(store, 'maya', memberCode);
+      store.db.exec('COMMIT');
+    } catch (error) {
+      store.db.exec('ROLLBACK');
+      throw error;
+    }
+  } finally {
+    if (!primaryIsDemo) store.close();
+  }
+}
 
 export function createWorkspaceApp(primary: Store, config: AppOptions = {}) {
   const options = { publicSignup: true, ...config };
@@ -58,6 +90,9 @@ export function createWorkspaceApp(primary: Store, config: AppOptions = {}) {
     let create = false;
     if (req.method === 'POST' && req.path === '/api/auth/signup') {
       const input = ownerSignupSchema.parse(req.body);
+      if (secure && input.email === demoOwnerEmail) {
+        return res.status(409).json({ error: 'This email is reserved for the demo. Use your own email to create a workspace.' });
+      }
       if (secure && !options.publicSignup && !validOwnerSetupToken(input.setupToken)) {
         return res.status(403).json({ error: 'Enter the owner setup token supplied by the deployment operator.' });
       }

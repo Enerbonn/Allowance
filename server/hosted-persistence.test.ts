@@ -7,7 +7,7 @@ import { resolve } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { openHostedPersistence } from './hosted-persistence.ts';
 import { Store } from './store.ts';
-import { createWorkspaceApp } from './workspace-router.ts';
+import { createWorkspaceApp, provisionHostedDemo } from './workspace-router.ts';
 
 const connection = process.env.ALLOWANCE_TEST_POSTGRES_URL;
 test('Postgres restores signup, sessions and evidence and fences an older writer', { skip: !connection }, async () => {
@@ -16,11 +16,15 @@ test('Postgres restores signup, sessions and evidence and fences an older writer
   const temp = mkdtempSync(resolve(scratch, 'hosted-persistence-test-'));
   process.env.ALLOWANCE_STORAGE_KEY = randomBytes(32).toString('base64');
   const active: (() => Promise<void>)[] = [];
+  const demoOwner = { email: 'owner@allowance.example', code: 'synthetic-demo-owner-code', role: 'owner' };
+  const demoMember = { email: 'maya@allowance.example', code: 'synthetic-demo-member-code', role: 'member' };
   async function launch() {
     const persistence = await openHostedPersistence(connection!, temp, true);
     process.env.ALLOWANCE_DATA_DIR = persistence.directory;
     const primary = new Store(resolve(persistence.directory, 'allowance.sqlite'), { sampleData: false });
+    provisionHostedDemo(primary, demoOwner.code, demoMember.code);
     const { app, closeWorkspaces } = createWorkspaceApp(primary, { persistence });
+    await persistence.checkpoint();
     const server = app.listen(0, '127.0.0.1');
     await once(server, 'listening');
     active.push(async () => {
@@ -30,8 +34,8 @@ test('Postgres restores signup, sessions and evidence and fences an older writer
       await persistence.close();
     });
     const base = 'http://127.0.0.1:' + (server.address() as AddressInfo).port + '/api';
-    return (path: string, body?: object, cookie?: string) => fetch(base + path, {
-      method: body ? 'POST' : 'GET',
+    return (path: string, body?: object, cookie?: string, method = body ? 'POST' : 'GET') => fetch(base + path, {
+      method,
       headers: { 'content-type': 'application/json', 'x-allowance-client': 'local-prototype', ...(cookie ? { cookie } : {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
@@ -45,9 +49,27 @@ test('Postgres restores signup, sessions and evidence and fences an older writer
     wrongLogin.password = randomBytes(12).toString('hex');
     await assert.rejects(openHostedPersistence(wrongLogin.toString(), temp, true), /Postgres rejected the login/);
     const first = await launch();
+    const demoLogin = await first('/session', demoOwner);
+    assert.equal(demoLogin.status, 200);
+    const demoCookie = getCookie(demoLogin);
+    const sample = await (await first('/bootstrap', undefined, demoCookie)).json();
+    assert.ok(sample.projects.length > 0 && sample.requests.length > 0);
+    assert.ok(sample.requests.every((request: {mode: string; receipt: string | null}) => request.mode === 'testnet' && request.receipt === null));
+    const addedProject = await first('/setup/projects', { name: 'Keep my demo project', description: 'Saved during testing', budget: '20' }, demoCookie);
+    assert.equal(addedProject.status, 201);
     const signup = await first('/auth/signup', owner);
     assert.equal(signup.status, 200, await signup.clone().text());
     const ownerCookie = getCookie(signup);
+    const blank = await (await first('/bootstrap', undefined, ownerCookie)).json();
+    assert.deepEqual(blank.projects, []);
+    assert.deepEqual(blank.requests, []);
+    assert.equal(blank.policy.version, 1);
+    assert.equal(blank.policy.autoTestnet, false);
+    assert.match(blank.policy.description, /assigned, active work/);
+    const saved = await first('/policy', {
+      ...blank.policy, autoLimit: '40', perRequest: '100', projectLimit: '500', description: 'Reviewed custom rules.',
+    }, ownerCookie, 'PUT');
+    assert.equal(saved.status, 200);
     const secondSignup = await first('/auth/signup', other);
     assert.equal(secondSignup.status, 200, await secondSignup.clone().text());
     const otherCookie = getCookie(secondSignup);
@@ -64,7 +86,16 @@ test('Postgres restores signup, sessions and evidence and fences an older writer
     // Open a new backend before shutting down the old one, as with rolling deploys.
     const second = await launch();
     active.unshift(staleWriter);
-    assert.equal((await (await second('/bootstrap', undefined, ownerCookie)).json()).person.email, owner.email);
+    const restored = await (await second('/bootstrap', undefined, ownerCookie)).json();
+    assert.equal(restored.person.email, owner.email);
+    assert.equal(restored.policy.version, 2);
+    assert.equal(restored.policy.description, 'Reviewed custom rules.');
+    const demoAgain = await second('/session', demoOwner);
+    assert.equal(demoAgain.status, 200);
+    assert.ok((await (await second('/bootstrap', undefined, getCookie(demoAgain))).json()).projects.some((project: {name: string}) => project.name === 'Keep my demo project'));
+    const mayaAgain = await second('/session', demoMember);
+    assert.equal(mayaAgain.status, 200);
+    assert.equal((await (await second('/bootstrap', undefined, getCookie(mayaAgain))).json()).person.email, demoMember.email);
     const memberLogin = await second('/session', { email: memberEmail, code: invite.code, role: 'member' });
     assert.equal(memberLogin.status, 200);
     assert.equal((await (await second('/bootstrap', undefined, getCookie(memberLogin))).json()).person.id, member.id);

@@ -20,5 +20,5 @@ export function sanitize<T>(value: T): T {
 }
 
 export function requestsOverride(text: string) {
-  return /\b(?:ignore|disregard|override|bypass|disable)\b[\s\S]{0,45}\b(?:instructions?|rules?|policy|limits?|checks?|guardrails?|approval)\b|\b(?:system prompt|developer message|act as (?:the )?owner|i am (?:the )?owner now|approve without review|mark (?:this|it|the request) (?:as )?paid)\b/i.test(text);
+  return /\b(?:ignore|disregard|override|bypass|disable|forget|supersede)\b[\s\S]{0,45}\b(?:instructions?|rules?|policy|limits?|checks?|guardrails?|approval)\b|\b(?:system prompt|developer message|act as (?:the )?owner|i am (?:the )?owner now|approve without review|mark (?:this|it|the request) (?:as )?paid)\b|\[(?:system|developer)\]|<\|(?:system|developer|im_start)\|>/i.test(text);
 }

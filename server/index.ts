@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { Store } from './store.ts';
-import { createWorkspaceApp } from './workspace-router.ts';
+import { createWorkspaceApp, provisionHostedDemo } from './workspace-router.ts';
 import { resolve } from 'node:path';
 import express from 'express';
 import { openHostedPersistence } from './hosted-persistence.ts';
@@ -31,6 +31,9 @@ const persistence = databaseUrl ? await openHostedPersistence(databaseUrl, dataD
 if (persistence) process.env.ALLOWANCE_DATA_DIR = persistence.directory;
 
 const store = new Store(process.env.ALLOWANCE_DB || resolve(dataDirectory(), 'allowance.sqlite'), { sampleData: !hostedOrigin && process.env.ALLOWANCE_SAMPLE_DATA === '1' });
+if (persistence) {
+  provisionHostedDemo(store, process.env.ALLOWANCE_DEMO_OWNER_CODE, process.env.ALLOWANCE_DEMO_MEMBER_CODE);
+}
 const { app, closeWorkspaces } = createWorkspaceApp(store, { persistence });
 await persistence?.checkpoint();
 if (hostedOrigin) {

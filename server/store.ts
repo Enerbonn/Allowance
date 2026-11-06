@@ -13,9 +13,16 @@ export function manilaWeek(now = new Date()) {
   return { start: new Date(start).toISOString(), end: new Date(start + 7 * 86400_000).toISOString() };
 }
 
+const starterAgreement = [
+  'Buy resources only for assigned, active work and use owner-approved suppliers.',
+  'Include a quote or purchase link, the total price, and how the purchase helps deliver the task.',
+  'Keep purchases within member, request, and project limits. Do not split a purchase to get around a limit.',
+  'Personal expenses, account sharing, and unlicensed materials are prohibited. Ask the owner about exceptions or uncertain requests.',
+].join('\n');
+
 export class Store {
   db: DatabaseSync;
-  constructor(path = '.local/allowance.sqlite', { sampleData = true } = {}) {
+  constructor(path = '.local/allowance.sqlite', { sampleData = true, testnetSamples = false } = {}) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
@@ -31,7 +38,7 @@ export class Store {
       this.db.exec('BEGIN IMMEDIATE');
       try {
         if (!this.list('people').length) {
-          if (sampleData) this.seed();
+          if (sampleData) this.seed(testnetSamples);
           else this.initializeBlankWorkspace();
         }
         this.db.exec('COMMIT');
@@ -39,6 +46,10 @@ export class Store {
         this.db.exec('ROLLBACK');
         throw error;
       }
+    }
+    const policy = this.policy();
+    if (this.setting('workspace-kind') === 'blank' && policy.version === 1 && !policy.description) {
+      this.put('policy', 'main', { ...policy, description: starterAgreement });
     }
     // Freeze the best available timestamp on older commitments.
     this.db.exec(`UPDATE requests SET data=json_set(data,'$.committedAt',json_extract(data,'$.updatedAt'))
@@ -153,12 +164,12 @@ export class Store {
     this.put('policy', 'main', {
       id: 'main', version: 1, perRequest: 100 * SCALE, autoLimit: 40 * SCALE, projectLimit: 500 * SCALE,
       allowedCategories: ['Software', 'Creative assets', 'Research', 'Services'],
-      requireEvidence: true, autoPay: false, paused: false, description: '',
+      requireEvidence: true, autoPay: false, autoTestnet: false, paused: false, description: starterAgreement,
     } satisfies Policy);
     this.setSetting('workspace-kind', 'blank');
   }
 
-  seed() {
+  seed(testnetSamples = false) {
     const people: Person[] = [
       { id: 'owner', name: 'Alex Morgan', email: 'owner@allowance.example', role: 'owner', title: 'Studio owner', initials: 'AM', active: true },
       { id: 'maya', name: 'Maya Chen', email: 'maya@allowance.example', role: 'member', title: 'Brand designer', initials: 'MC', active: true },
@@ -186,8 +197,9 @@ export class Store {
       { id: 'REQ-1044', title: 'Campaign image collection', taskId: 'campaign', projectId: 'launch', requesterId: 'maya', supplierId: 'framekit', category: 'Creative assets', amount: 34 * SCALE, purpose: 'Licensed product and lifestyle images for the approved campaign artwork.', status: 'needs_review', receipt: null, ai: null },
       { id: 'REQ-1045', title: 'Personal workstation upgrade', taskId: 'edit', projectId: 'motion', requesterId: 'leo', supplierId: 'unverified', category: 'Equipment', amount: 160 * SCALE, purpose: 'An equipment upgrade that has not been approved in the project scope.', status: 'blocked', receipt: null, ai: null },
     ];
-    examples.forEach((e, i) => {
-      const r = { ...e, evidenceUrl: `https://${suppliers.find(s => s.id === e.supplierId)!.domain}/quote/sample`, createdAt: new Date(Date.now() - (4 - i) * 3600000).toISOString(), updatedAt: new Date().toISOString(), policyVersion: 1, reasons: e.status === 'blocked' ? ['Equipment is outside the approved policy.', 'This supplier needs owner verification.'] : [], mode: 'simulated', idempotencyKey: `sample-${e.id}`, comment: '' } as SpendRequest;
+    examples.forEach((example, i) => {
+      const e = testnetSamples && example.status === 'paid' ? { ...example, status: 'needs_review', receipt: null } : example;
+      const r = { ...e, evidenceUrl: `https://${suppliers.find(s => s.id === e.supplierId)!.domain}/quote/sample`, createdAt: new Date(Date.now() - (4 - i) * 3600000).toISOString(), updatedAt: new Date().toISOString(), policyVersion: 1, reasons: e.status === 'blocked' ? ['Equipment is outside the approved policy.', 'This supplier needs owner verification.'] : [], mode: testnetSamples ? 'testnet' : 'simulated', idempotencyKey: `sample-${e.id}`, comment: '' } as SpendRequest;
       if (r.status === 'paid') r.committedAt = r.updatedAt; this.create(r); if (r.status === 'paid') this.db.prepare("INSERT INTO commitments VALUES(?,?,?,'paid')").run(r.id, r.projectId, r.amount);
     });
     this.event('Sample workspace ready', 'All people, projects, suppliers, balances, and purchases in this workspace are fictional demonstration data.', 'Allowance', null, 'system');
