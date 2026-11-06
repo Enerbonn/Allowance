@@ -4,7 +4,7 @@ This mapping uses the organizer’s announcement and contract list supplied in t
 
 | Requirement from the organizer | How Allowance addresses it | Verification |
 | --- | --- | --- |
-| Build an agentic payment | The AI assesses a member’s request and proposes a purchase within owner-defined authority. The backend checks permission and budgets. The owner authorizes the Testnet action. | Owner/member conversations and simulation exercised locally. |
+| Build an agentic payment | The AI assesses a member’s request and proposes a purchase within owner-defined authority. The backend checks permission and budgets. The owner sets up and authorizes the Testnet agent. Eligible purchases within the configured automatic limit can proceed automatically. | Owner/member conversations and simulation exercised locally. |
 | Use Velo | The backend uses `@carts1024/velo-sdk` to request gas sponsorship and submit the signed Testnet transaction. | Implemented. A successful sponsored payment and claim still need end-to-end verification. |
 | Interact with the specified Noir Testnet contracts | Register owner/device association, authorize a limited agent and use escrow for funding, payment authorization and merchant claim. | All three contract instances were verified present by read-only checks on 2026-11-05. Wallet setup and a complete payment remain pending. |
 
@@ -48,7 +48,7 @@ The local demo works before wallet setup. Use these steps when you want to try t
 
 If Velo reports **Account not found**, verify Friendbot funded the same public address and that Testnet is selected. If a contract cannot be verified after a Testnet reset, check the organizer’s current contract list before continuing.
 
-Allowance marks the request paid after the merchant claim is confirmed. The on-chain flow still needs a successful end-to-end test. Use the local simulation for a demo you can run immediately.
+Allowance marks the request paid after the merchant claim is confirmed. The on-chain flow still needs a successful end-to-end test. Finish the Testnet setup before a live payment demo.
 
 ## Blockchain tools and source
 

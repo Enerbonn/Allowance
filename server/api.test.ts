@@ -42,12 +42,17 @@ test('API isolates identities, owner controls, and cross-origin writes', async (
     assert.equal(createdTask.status, 201);
     const badTask = await fetch(base + '/setup/tasks', { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ title: 'Invalid task assignment', description: 'This task must not be created for an absent person.', projectId: project.id, assigneeId: 'missing' }) });
     assert.equal(badTask.status, 400);
-    const policy = store.policy(); policy.projectLimit = units('65'); store.put('policy', 'main', policy);
-    const competing = [randomUUID(), randomUUID()].map(id => ({ ...store.request('REQ-1044')!, id, idempotencyKey: randomUUID(), amount: units('30') }));
-    competing.forEach(r => store.create(r));
-    const results = await Promise.all(competing.map(r => fetch(base + `/requests/${r.id}/decision`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ action: 'approve', note: 'Synthetic concurrent budget verification.' }) })));
-    assert.deepEqual(results.map(r => r.status).sort(), [200, 400]);
-    assert.equal(store.committed('launch'), units('58'));
+    const simulated = await fetch(base + '/requests', { method:'POST', headers: memberHeaders, body: JSON.stringify({
+      title:'Sample purchase', taskId:'identity', supplierId:'typefoundry', category:'Creative assets',
+      amount:'20', purpose:'A licensed font for the assigned Northstar presentation.',
+      evidenceUrl:'https://typefoundry.example/quote', mode:'simulated', idempotencyKey:randomUUID(),
+    }) });
+    assert.equal(simulated.status,400);
+    const legacyApproval = await fetch(base + '/requests/REQ-1044/decision', {
+      method:'POST',headers:ownerHeaders,body:JSON.stringify({action:'approve',note:'Synthetic legacy approval'}),
+    });
+    assert.equal(legacyApproval.status,400);
+    assert.equal(store.committed('launch'), units('28'));
   } finally { await new Promise<void>(r => server.close(() => r())); store.close(); }
 });
 

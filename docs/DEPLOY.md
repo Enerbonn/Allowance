@@ -34,7 +34,7 @@ Select **Docker** for the runtime and leave the Docker command override blank. I
 node -p "require('node:crypto').randomBytes(32).toString('base64')" | Set-Clipboard
 ~~~
 
-Save and redeploy, then check `/api/health`. If Render reports a port scan timeout and detects a localhost listener, check `ALLOWANCE_PUBLIC_ORIGIN` first. The Docker image supplies `/data` and reads Render's `PORT` when hosted mode is configured. A Free Web Service uses temporary storage. Use fictional data and simulated purchases because the workspace resets when Render spins down, restarts or redeploys the service. [Free Web Service limits](https://render.com/docs/free#local-files-lost-on-redeploy)
+Save and redeploy, then check `/api/health`. If Render reports a port scan timeout and detects a localhost listener, check `ALLOWANCE_PUBLIC_ORIGIN` first. The Docker image supplies `/data` and reads Render's `PORT` when hosted mode is configured. A Free Web Service uses temporary storage. Use a persistent deployment for funded Testnet escrow. On a Free Web Service, the wallet setup, protected local agent keys, and request records reset when Render spins down, restarts, or redeploys the service. [Free Web Service limits](https://render.com/docs/free#local-files-lost-on-redeploy)
 
 ## 3. Connect the gateway and create the owner
 
@@ -47,6 +47,6 @@ Save and redeploy, then check `/api/health`. If Render reports a port scan timeo
    | ALLOWANCE_PROXY_TOKEN | The exact same proxy token stored in Render |
 
 2. Open the Vercel production URL and choose **Business owner**. Enter your email, a private access code and the owner setup token from Render. After signup, only an authenticated owner can add staff and issue access codes.
-3. Add a test member and issue a code. Test a simulated purchase before setting up a wallet. If you enable the assistant, verify the connection from **Connections**. Follow the [wallet walkthrough](HACKATHON.md#wallet-and-testnet-tutorial-on-windows) for Testnet.
+3. Add a test member and issue a code. Connect a dedicated Stellar Testnet wallet, finish the payment setup, and verify one end-to-end Testnet purchase before the demo. If you enable the assistant, verify the connection from **Connections**. Follow the [wallet walkthrough](HACKATHON.md#wallet-and-testnet-tutorial-on-windows) for Testnet.
 
 Use the production URL for this workspace. Preview URLs need a separate configured origin and backend if you want to test them with real sessions. Render's single service instance owns the disk. Back up the disk and test a restore before storing any team data you need to retain. The first deployment starts with a fresh workspace. Create fresh Testnet demo accounts there because Windows-protected keys belong to the original laptop.

@@ -63,13 +63,13 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
         store.setReview(r.id, { ...offlineReview(), summary: 'This request asks to bypass the spending rules. The owner must review it.' });
         return;
       }
-      const raw = await ai.call({ agentInstructions: reviewInstructions, checks: store.checks(r), request: { title: r.title, purpose: r.purpose, amount: money(r.amount), currency: 'XLM', category: r.category, requester: assistantMember(store, store.get<Person>('people',r.requesterId)!), evidenceSupplied: !!(r.evidenceUrl || r.evidenceId), attachment: r.evidenceId ? 'File retained for human review; contents not inspected by the AI.' : null }, task: store.get('tasks', r.taskId), supplier: store.suppliers().find(s => s.id === r.supplierId), policy: { description: store.policy().description, perRequest: money(store.policy().perRequest), autoLimit: money(store.policy().autoLimit) } });
+      const raw = await ai.call({ agentInstructions: reviewInstructions, checks: store.checks(r), request: { title: r.title, purpose: r.purpose, amount: money(r.amount), currency: 'XLM', category: r.category, requester: assistantMember(store, store.get<Person>('people',r.requesterId)!), evidenceSupplied: !!(r.evidenceUrl || r.evidenceId), quoteReferenceMatchesApprovedSupplier: store.quoteMatchesSupplier(r), attachment: r.evidenceId ? 'File retained for human review; contents not inspected by the AI.' : null }, task: store.get('tasks', r.taskId), supplier: store.suppliers().find(s => s.id === r.supplierId), policy: { description: store.policy().description, requireEvidence: store.policy().requireEvidence, perRequest: money(store.policy().perRequest), autoLimit: money(store.policy().autoLimit) } });
       const result = validateReview(raw, ai.provider ?? undefined);
       aiConnected(result.model);
       const reviewed = store.setReview(r.id, { ...result, summary: redact(result.summary), reasoning: result.reasoning.map(redact), missingInformation: result.missingInformation.map(redact) });
       if (reviewed.mode === 'testnet' && store.canAutoApprove(reviewed)) {
         try {
-          await testnet.approveRequest(reviewed.id, 'Policy-approved assistant', result.summary && redact(result.summary), true);
+          await testnet.approveRequest(reviewed.id, 'Policy-approved assistant', redact(result.summary), true);
         } catch {
           const current = store.request(reviewed.id);
           if (current?.status === 'needs_review') {
@@ -85,7 +85,7 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
   }
   const testnet = installTestnet(app,store,auth,owner);
   installWorkspace(app, store, { auth, owner, sessionPerson: person, callAI: ai.call, connected: aiConnected, failed: aiFailed, testnet });
-  app.get('/api/health', (_req, res) => res.json({ ok: true, app: 'Allowance', paymentMode: 'simulated' }));
+  app.get('/api/health', (_req, res) => res.json({ ok: true, app: 'Allowance', paymentMode: 'testnet' }));
   app.delete('/api/session', auth, (req, res) => { const p = req.headers.cookie?.match(/allowance_session=([^;]+)/)?.[1]; if (p) store.db.prepare('DELETE FROM sessions WHERE token=?').run(p); res.clearCookie('allowance_session', { httpOnly:true, secure:!!publicOrigin, sameSite:'strict' }); res.json({ ok: true }); });
   app.post('/api/evidence', auth, (req, res) => {
     const v = z.object({ name: z.string().min(1).max(120), mime: z.enum(['image/png', 'image/jpeg', 'application/pdf']), data: z.string().max(1400000) }).parse(req.body);
@@ -100,7 +100,7 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
     const p = res.locals.person as Person; const requests = store.requests().filter(r => p.role === 'owner' || r.requesterId === p.id);
     const tasks = store.tasks().filter(t => p.role === 'owner' || t.assigneeId === p.id);
     const projectIds = new Set(tasks.map(t => t.projectId));
-    res.json({ messages: store.personRecords<any>('chat',p.id).slice(0,40).reverse().map(message => ({ ...message, proposals: message.proposals?.map((proposal: { id: string }) => store.get('proposals', proposal.id) || proposal) })), person: publicMember(store,p), people: p.role === 'owner' ? store.people().map(x=>publicMember(store,x)) : [publicMember(store,p)], projects: store.projects().filter(pr => p.role === 'owner' || projectIds.has(pr.id)).map(pr => ({ ...pr, committed: store.committed(pr.id) })), tasks, suppliers: store.suppliers(), policy: store.policy(), requests: requests.map(r => ({ ...r, checks: store.checks(r) })), events: store.events().filter(e => p.role === 'owner' || (e.requestId && requests.some(r => r.id === e.requestId))), categories, ai: aiState, integrations: { payments: 'simulated', wallet: false, velo: false, noir: false, n8nUrl: 'http://localhost:5679', sampleWorkspace: store.setting('workspace-kind') !== 'blank' } });
+    res.json({ messages: store.personRecords<any>('chat',p.id).slice(0,40).reverse().map(message => ({ ...message, proposals: message.proposals?.map((proposal: { id: string }) => store.get('proposals', proposal.id) || proposal) })), person: publicMember(store,p), people: p.role === 'owner' ? store.people().map(x=>publicMember(store,x)) : [publicMember(store,p)], projects: store.projects().filter(pr => p.role === 'owner' || projectIds.has(pr.id)).map(pr => ({ ...pr, committed: store.committed(pr.id) })), tasks, suppliers: store.suppliers(), policy: store.policy(), requests: requests.map(r => ({ ...r, checks: store.checks(r) })), events: store.events().filter(e => p.role === 'owner' || (e.requestId && requests.some(r => r.id === e.requestId))), categories, ai: aiState, integrations: { payments: 'testnet', wallet: false, velo: false, noir: false, n8nUrl: 'http://localhost:5679', sampleWorkspace: store.setting('workspace-kind') !== 'blank' } });
   });
   app.post('/api/requests', auth, (req, res) => {
     const input = requestSchema.parse(req.body); const p = res.locals.person as Person;
@@ -115,11 +115,11 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
   app.post('/api/requests/:id/decision', auth, owner, (req, res) => {
     const r = store.request(String(req.params.id)); if (!r) return res.status(404).json({ error: 'Request not found.' });
     const action = req.body.action; const note = String(req.body.note || '').trim().slice(0, 1500);
-    if (action === 'approve') { if (!note) return res.status(400).json({ error: 'Add an approval note for the audit record.' }); const paid = store.pay(r.id, res.locals.person.name); paid.comment = note; store.saveRequest(paid); return res.json(paid); }
+    if (action === 'approve') return res.status(400).json({ error: 'Use the Testnet payment action. Only Stellar Testnet payments are supported.' });
     if (action === 'decline') { if (!['needs_review', 'blocked'].includes(r.status)) return res.status(409).json({ error: 'This request cannot be declined now.' }); if (!note) return res.status(400).json({ error: 'Explain why the request is declined.' }); r.status = 'declined'; r.comment = note; store.saveRequest(r); store.event('Request declined', note, res.locals.person.name, r.id, 'review'); return res.json(r); }
     return res.status(400).json({ error: 'Choose approve or decline.' });
   });
-  app.post('/api/requests/:id/cancel', auth, (req, res) => { const r = store.request(String(req.params.id)); if (!r || !visible(res, r)) return res.status(404).json({ error: 'Request not found.' }); if (!['analyzing', 'needs_review', 'blocked'].includes(r.status)) return res.status(409).json({ error: 'A completed or declined request cannot be cancelled.' }); r.status = 'cancelled'; store.saveRequest(r); store.event('Request cancelled', 'No simulated payment was made.', res.locals.person.name, r.id); res.json(r); });
+  app.post('/api/requests/:id/cancel', auth, (req, res) => { const r = store.request(String(req.params.id)); if (!r || !visible(res, r)) return res.status(404).json({ error: 'Request not found.' }); if (!['analyzing', 'needs_review', 'blocked'].includes(r.status)) return res.status(409).json({ error: 'A completed or declined request cannot be cancelled.' }); r.status = 'cancelled'; store.saveRequest(r); store.event('Request cancelled', 'No payment was made.', res.locals.person.name, r.id); res.json(r); });
   app.put('/api/policy', auth, owner, (req, res) => {
     const input = policySchema.parse(req.body); const perRequest = units(input.perRequest), autoLimit = units(input.autoLimit), projectLimit = units(input.projectLimit);
     if (autoLimit > perRequest || perRequest > projectLimit) return res.status(400).json({ error: 'Automatic limit must not exceed the request limit, and request limit must not exceed the project limit.' });

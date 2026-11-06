@@ -101,8 +101,10 @@ export class Store {
     const policy = this.policy();
     if (r.status !== 'needs_review' || !this.reviewIsCurrent(r) || !this.trustedAssessment(r) ||
         r.ai?.recommendation !== 'approve' || this.checks(r).some(check => !check.pass)) return false;
-    if (r.amount > policy.autoLimit || !(r.mode === 'testnet' ? policy.autoTestnet : policy.autoPay)) return false;
-    if (!policy.requireEvidence) return true;
+    if (r.mode !== 'testnet' || r.amount > policy.autoLimit || !policy.autoTestnet) return false;
+    return !policy.requireEvidence || this.quoteMatchesSupplier(r);
+  }
+  quoteMatchesSupplier(r: SpendRequest) {
     const supplierHost = this.get<Supplier>('suppliers', r.supplierId)?.domain.toLowerCase();
     const quoteHost = URL.canParse(r.evidenceUrl) ? new URL(r.evidenceUrl).hostname.toLowerCase() : '';
     return !!supplierHost && (quoteHost === supplierHost || quoteHost.endsWith('.' + supplierHost));
@@ -123,7 +125,6 @@ export class Store {
     }
     this.saveRequest(r);
     this.event(r.status === 'declined' ? 'Assistant declined request' : 'Assessment completed', ai.summary, ai.provider, r.id, 'review');
-    if (r.mode === 'simulated' && this.canAutoApprove(r)) return this.pay(id, 'Policy-approved assistant');
     return r;
   }
   pay(id: string, actor: string) {

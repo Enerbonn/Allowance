@@ -94,12 +94,12 @@ test('changed policy cannot silently reuse an in-flight AI approval', () => {
   s.setReview(r.id, { recommendation: 'approve', summary: 'Task related.', reasoning: [], missingInformation: [], provider: 'Relmio via local n8n' });
   assert.equal(s.request(r.id)!.status, 'needs_review'); assert.equal(s.request(r.id)!.receipt, null); s.close();
 });
-test('a complete model approval can trigger exactly one permitted simulated payment', () => {
+test('a clear assessment cannot produce a legacy simulated receipt', () => {
   const s = new Store(':memory:'); const r = candidate(s, '20'); r.status = 'analyzing'; s.create(r);
   const result = s.setReview(r.id, { recommendation: 'approve', summary: 'Clear relevance to assigned work.', reasoning: ['All required context supplied.'], missingInformation: [], provider: 'Relmio via local n8n' });
-  assert.equal(result.status, 'paid'); assert.match(result.receipt!, /^SIM-/); assert.equal(result.mode, 'simulated');
+  assert.equal(result.status, 'needs_review'); assert.equal(result.receipt, null); assert.equal(s.canAutoApprove(result), false);
   s.setReview(r.id, { recommendation: 'approve', summary: 'Repeated result.', reasoning: [], missingInformation: [], provider: 'Relmio via local n8n' });
-  assert.equal(s.committed('launch'), units('48')); s.close();
+  assert.equal(s.committed('launch'), units('28')); s.close();
 });
 
 test('supplier category and quote host constrain automatic payments', () => {

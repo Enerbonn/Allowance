@@ -17,7 +17,7 @@ export const requestSchema = z.object({
   category: z.enum(categories), amount: z.string(), purpose: z.string().trim().min(15).max(3000),
   evidenceUrl: z.union([z.literal(''), z.url().refine(v => new URL(v).protocol === 'https:', 'Use an HTTPS link.')]).default(''),
   evidenceId: z.string().max(80).optional(),
-  mode: z.enum(['simulated','testnet']).default('simulated'),
+  mode: z.literal('testnet').default('testnet'),
   idempotencyKey: z.string().min(12).max(100),
 });
 export const policySchema = z.object({

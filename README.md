@@ -2,7 +2,7 @@
 
 An owner sets a budget, assigns work and defines which expenses are eligible. A team member signs in with their email and an owner-issued code, describes a purchase and submits it for review. AI helps with the explanation and draft. The backend enforces identity, assignments, suppliers and budgets and records the decision.
 
-**Current demo** supports owner and member accounts, rules, requests, manual or AI-assisted review and local payment simulation. The Stellar Testnet integration has passed read-only contract checks. A complete authorization and merchant claim still needs an end-to-end test.
+**Current demo** supports owner and member accounts, rules, requests, assistant decisions and Stellar Testnet payments. A complete Velo-sponsored authorization and merchant claim still needs an end-to-end test.
 
 ## Run on your laptop
 
@@ -33,7 +33,7 @@ Open [Allowance on port 4310](http://127.0.0.1:4310/). On Windows, after the fir
 2. In **Team**, select **Add member** and enter the email they gave you. Use **Draft responsibilities** on that profile if you want help drafting responsibilities and spending limits. Review suggestions before applying them.
 3. In **Projects**, create a project with a budget, then assign a task to the member. In **Spending policy**, add an approved supplier and review the spending limits and evidence rules.
 4. Back in **Team**, select **Issue code** for the member and share the sign-in email and private code shown once. Open your account menu and sign out, then choose **Team member** and sign in with their email and code.
-5. Make a request for the assigned task and approved supplier. Choose **Local simulation**. Return as owner, review the checks, and approve an eligible request with a decision note. Open the simulated receipt and check the remaining project balance.
+5. Complete the Testnet payment setup and enable **Allow automatic Testnet payments**. Submit a request for the assigned task and approved supplier. Clear eligible requests can proceed within the automatic limit, and uncertain requests go to the owner. Open the Testnet receipt after the merchant claim is confirmed.
 
 For a prefilled demo, stop the current server and start a separate database from PowerShell. These settings apply to that terminal:
 
@@ -82,7 +82,6 @@ flowchart TD
     N -. draft or recommendation .-> A
     A --> P{Independent spending checks}
     P -- blocked or unclear --> O[Block or owner review]
-    P -- eligible demo --> D[Simulated receipt]
     P -- eligible or owner-approved Testnet --> V[Velo Gas sponsorship and submission]
     V --> E[Noir escrow authorization on Stellar Testnet]
     E --> C[Merchant claim and confirmation]
@@ -90,7 +89,7 @@ flowchart TD
 
 ### Monitor spending and make changes
 
-- **Overview** separates paid simulation, paid Testnet, and pending Testnet purchases. It shows the latest checked Noir escrow balance and agent expiry. Open a request to see what the member needed, the decision, and its receipt.
+- **Overview** shows paid and pending Testnet purchases. It shows the latest checked Noir escrow balance and agent expiry. Open a request to see what the member needed, the decision, and its receipt.
 - **Team** can add members, update profiles and spending limits, issue access codes, and remove or restore access. Removing access immediately ends their sessions and revokes their code. Prior requests remain in the ledger. Issue a new code after restoring access. Members sign in with their own email and issued code.
 - **Connections** remembers multiple wallets with separate Testnet settings. Select one at a time and reconnect the matching wallet to sign. The owner can deposit to Noir escrow or withdraw to the registered owner wallet. A pending payment must be reconciled before switching, disconnecting, or withdrawing. Disconnecting keeps the setup and ledger records.
 
@@ -107,11 +106,11 @@ Ask the assistant to “Set Maya’s weekly cap to 500 XLM.” The backend sends
 }
 ```
 
-The preview shows the member and the field. When the owner applies it, the server verifies their session, checks the profile version, validates the amount, and writes only the permitted field. A normal manual form writes the same field. The weekly cap resets Mondays at midnight in Manila and counts paid and reserved purchases, including simulation. It applies in addition to project, all-time, per-request and on-chain limits. Clearing the field removes the separate weekly cap. Setting it to zero blocks spending. Changing a Noir authorization or moving escrow funds requires the wallet signature steps.
+The preview shows the member and the field. When the owner applies it, the server verifies their session, checks the profile version, validates the amount, and writes only the permitted field. A normal manual form writes the same field. The weekly cap resets Mondays at midnight in Manila and counts paid and reserved purchases. It applies in addition to project, all-time, per-request and on-chain limits. Clearing the field removes the separate weekly cap. Setting it to zero blocks spending. Changing a Noir authorization or moving escrow funds requires the wallet signature steps.
 
 The Markdown file contains assistant instructions. SQLite stores chats, reviewed notes, requests and decisions. Before each call the backend retrieves recent messages and keyword matches from the person's permitted records and calculates exact totals separately. Owners can ask about the workspace ledger. Members can only retrieve their own requests and chats, plus shared owner-reviewed notes. The assistant can miss a paraphrased older reference, so use a request title or ID for a precise lookup. No embedding service is required. Evidence files are available for human review; the assistant sees whether evidence was supplied.
 
-Before spending, the backend checks membership, assignment, supplier, category, evidence and available budgets. Clear assistant declines close the request with a reason. Uncertain assessments, missing information, or purchases above the automatic limit go to the owner. Enable **Allow automatic Testnet payments** in Spending policy after configuring the Testnet wallet, Noir agent, escrow and Velo Gas. The separate switch keeps existing workspaces from enabling Testnet spending just because simulation is already enabled. It uses **integer stroops** for exact amounts, **SQLite transactions** for competing approvals, and **idempotency keys** to prevent duplicate requests. Uncertain Testnet outcomes keep a reservation for reconciliation.
+Before spending, the backend checks membership, assignment, supplier, category, evidence and available budgets. Clear assistant declines close the request with a reason. Uncertain assessments, missing information, or purchases above the automatic limit go to the owner. Enable **Allow automatic Testnet payments** in Spending policy after configuring the Testnet wallet, Noir agent, escrow and Velo Gas. Owners enable Testnet automation explicitly after reviewing agent authority and spending caps. Existing simulation receipts remain historical records. It uses **integer stroops** for exact amounts, **SQLite transactions** for competing approvals, and **idempotency keys** to prevent duplicate requests. Uncertain Testnet outcomes keep a reservation for reconciliation.
 
 ## AI credentials and APIs
 
