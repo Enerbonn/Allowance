@@ -40,7 +40,7 @@ export function parseAgentSettings(input: unknown, now = Date.now()) {
   return { ...settings, maxAmount: settings.maxAmount === null ? null : money(units(settings.maxAmount)) };
 }
 
-export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner:RequestHandler){
+export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner:RequestHandler,checkpoint?: () => Promise<void>){
  const noir=new NoirAgentClient({network});let busy=false;
  type Project = { owner: string; projectId: string };
  type WalletConfig = { owner: string; deviceHash: string; asset: string; contracts: typeof EVENT_CONTRACTS; agent?: string; merchant?: string };
@@ -144,7 +144,7 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   const finish=()=>{op.state='claimed';store.put('chain-operations',r.id,op);r.status='paid';r.receipt=op.claimHash;store.saveRequest(r);store.db.prepare("UPDATE commitments SET state='paid' WHERE request_id=?").run(r.id);store.event('Testnet payment claimed',`Authorization ${op.result.transactionHash}; merchant claim ${op.claimHash}.`,actor,r.id,'chain');return op;};
   if(op.state==='claimed')return op;
   if(op.claimHash){const result=await noir.server.getTransaction(op.claimHash);if(result.status==='SUCCESS')return finish();op.state=result.status==='FAILED'?'claim_failed':'claim_confirmation_pending';store.put('chain-operations',r.id,op);return op;}
-  const merchant=getKey(keyName(c,'merchant'));const claimXdr=await noir.prepare(merchant.publicKey(),{kind:'claim',token:asset});const claimTx=TransactionBuilder.fromXDR(claimXdr,Networks.TESTNET);if(!('source' in claimTx)||claimTx.source!==c.merchant)throw new Error('Unexpected merchant transaction.');claimTx.sign(merchant);op.claimHash=claimTx.hash().toString('hex');op.state='claim_submitting';store.put('chain-operations',r.id,op);await noir.submit(claimTx.toXDR());return finish();
+  const merchant=getKey(keyName(c,'merchant'));const claimXdr=await noir.prepare(merchant.publicKey(),{kind:'claim',token:asset});const claimTx=TransactionBuilder.fromXDR(claimXdr,Networks.TESTNET);if(!('source' in claimTx)||claimTx.source!==c.merchant)throw new Error('Unexpected merchant transaction.');claimTx.sign(merchant);op.claimHash=claimTx.hash().toString('hex');op.state='claim_submitting';store.put('chain-operations',r.id,op);await checkpoint?.();await noir.submit(claimTx.toXDR());return finish();
  }
  app.get('/api/testnet',auth,owner,(_req,res)=>res.json(safeStatus()));
  app.post('/api/testnet/wallet',auth,owner,(req,res)=>{
@@ -186,6 +186,7 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   const c=config();if(!c.owner)throw new Error('Connect a Stellar Testnet owner wallet first.');mkdirSync(dataDirectory(),{recursive:true});
   for(const role of ['agent','merchant'] as const){const name=keyName(c,role);const path=resolve(dataDirectory(),name+'.dpapi');if(!existsSync(path))writeFileSync(path,protect(Keypair.random().secret()),{mode:0o600});c[role]=getKey(name).publicKey();}
   store.put('testnet-wallet',c.owner,c);
+  await checkpoint?.();
   for(const role of ['agent','merchant'] as const){const response=await fetch('https://friendbot.stellar.org/?addr='+encodeURIComponent(c[role]!),{signal:AbortSignal.timeout(30000)});if(!response.ok&&response.status!==400)throw new Error('The Testnet faucet is unavailable. Public account details were saved; retry later.');}
   store.event('Testnet demo accounts initialized','Dedicated local agent and demo merchant. No real funds.',res.locals.person.name,null,'system');res.json(safeStatus());
  }));
@@ -234,7 +235,7 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   if(pending.owner!==c.owner)throw new Error('The active wallet changed. Prepare a fresh wallet transaction.');
   if (['revokeAgent','defundEscrow'].includes(pending.kind) && hasUnsettledPayment()) throw new Error('Reconcile the pending Testnet payment before revoking or withdrawing.');
   const signed=String(req.body.signedXdr||'');validateOwnerSetupSignature(signed,pending.hash,c.owner);
-  pending.state='submitting';store.put('wallet-pending',pending.id,pending);const hash=await noir.submit(signed);pending.state='confirmed';pending.hash=hash;store.put('wallet-pending',pending.id,pending);store.event('Testnet setup confirmed',`${pending.kind}: ${hash}`,res.locals.person.name,null,'chain');await inspect(c);res.json({hash});
+  pending.state='submitting';store.put('wallet-pending',pending.id,pending);await checkpoint?.();const hash=await noir.submit(signed);pending.state='confirmed';pending.hash=hash;store.put('wallet-pending',pending.id,pending);store.event('Testnet setup confirmed',`${pending.kind}: ${hash}`,res.locals.person.name,null,'chain');await inspect(c);res.json({hash});
  }));
  async function approveRequest(id: string, actor: string, note: string, automatic = false) {
   assertIdle();
@@ -270,7 +271,9 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
    }
    try{
     const unsigned=await noir.prepare(agent.publicKey(),{kind:'authorize',deviceHash:c.deviceHash,merchant:c.merchant,asset,amount:BigInt(r.amount),nonce});const tx=TransactionBuilder.fromXDR(unsigned,Networks.TESTNET);if(!('source' in tx)||tx.source!==agent.publicKey())throw new Error('Unexpected agent transaction.');tx.sign(agent);op.transactionHash=tx.hash().toString('hex');store.put('chain-operations',id,op);
+    await checkpoint?.();
     const reservation=await velo.gas.sponsor(tx.toXDR(),{idempotencyKey:'allowance:'+id,correlationId:id});op.identity={requestId:reservation.requestId,transactionHash:reservation.transactionHash};op.state='sponsored';store.put('chain-operations',id,op);
+    await checkpoint?.();
     const result=await velo.gas.submit({...op.identity,transactionXdr:tx.toXDR()});op.result=result;op.state=result.status;store.put('chain-operations',id,op);
     return result.status==='succeeded'?await settleClaim(op,r,actor):op;
    }catch(e){op.error=e instanceof Error?e.message:'Testnet operation failed.';op.state='needs_reconciliation';store.put('chain-operations',id,op);throw new Error(op.error+' The allowance reservation remains held; no automatic retry was made.');}

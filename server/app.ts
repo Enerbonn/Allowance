@@ -12,8 +12,9 @@ import { installWorkspace, publicMember, assistantMember } from './workspace.ts'
 import { redact, requestsOverride, reviewInstructions } from './assistant-safety.ts';
 import { createAiClient } from './ai.ts';
 import {installTestnet} from './testnet.ts';
+import type { HostedPersistence } from './hosted-persistence.ts';
 
-export type AppOptions = { aiEndpoint?: string; aiToken?: string; publicSignup?: boolean };
+export type AppOptions = { aiEndpoint?: string; aiToken?: string; publicSignup?: boolean; persistence?: HostedPersistence };
 
 export function createApp(store: Store, options: AppOptions = {}, dispatch?: express.RequestHandler) {
   const app = express();
@@ -39,6 +40,23 @@ export function createApp(store: Store, options: AppOptions = {}, dispatch?: exp
       if (!['GET', 'HEAD'].includes(req.method) && req.get('x-allowance-client') !== 'local-prototype') {
         return res.status(403).json({ error: 'Use the Allowance application to make changes.' });
       }
+    }
+    next();
+  });
+  const persistence = options.persistence;
+  if (persistence && dispatch) app.use((req, res, next) => {
+    if (!req.path.startsWith('/api/')) return next();
+    const respond = res.json.bind(res);
+    const unavailable = () => {
+      res.removeHeader('Set-Cookie');
+      return respond.call(res.status(503), { error: 'Workspace storage is temporarily unavailable.' });
+    };
+    if (!persistence.available()) return unavailable();
+    if (req.path !== '/api/health') {
+      res.json = (body: unknown) => {
+        void persistence.checkpoint().then(() => respond(body), unavailable);
+        return res;
+      };
     }
     next();
   });
@@ -86,9 +104,14 @@ export function createApp(store: Store, options: AppOptions = {}, dispatch?: exp
       store.setReview(r.id, offlineReview());
     }
   }
-  const testnet = installTestnet(app,store,auth,owner);
+  function startReview(r: SpendRequest) {
+    void review(r).finally(() => persistence?.checkpoint()).catch(() => {
+      console.error('A purchase review could not be persisted.');
+    });
+  }
+  const testnet = installTestnet(app,store,auth,owner,persistence?.checkpoint);
   installWorkspace(app, store, { auth, owner, sessionPerson: person, callAI: ai.call, connected: aiConnected, failed: aiFailed, testnet, publicSignup: options.publicSignup });
-  app.get('/api/health', (_req, res) => res.json({ ok: true, app: 'Allowance', paymentMode: 'testnet' }));
+  app.get('/api/health', (_req, res) => res.json({ ok: true, app: 'Allowance', paymentMode: 'testnet', ...(persistence ? { storage: 'supabase' } : {}) }));
   app.delete('/api/session', auth, (req, res) => { const p = req.headers.cookie?.match(/allowance_session=([^;]+)/)?.[1]; if (p) store.db.prepare('DELETE FROM sessions WHERE token=?').run(p); res.clearCookie('allowance_session', { httpOnly:true, secure:!!publicOrigin, sameSite:'strict' }); res.json({ ok: true }); });
   app.post('/api/evidence', auth, (req, res) => {
     const v = z.object({ name: z.string().min(1).max(120), mime: z.enum(['image/png', 'image/jpeg', 'application/pdf']), data: z.string().max(1400000) }).parse(req.body);
@@ -111,10 +134,10 @@ export function createApp(store: Store, options: AppOptions = {}, dispatch?: exp
     if (input.evidenceId && store.get<any>('evidence', input.evidenceId)?.personId !== p.id) return res.status(400).json({ error: 'Attach evidence uploaded by your own identity.' });
     const now = new Date().toISOString();
     const r: SpendRequest = { ...input, title: redact(input.title), purpose: redact(input.purpose), id: `REQ-${randomUUID().slice(0, 8).toUpperCase()}`, projectId: task.projectId, requesterId: p.id, amount: units(input.amount), status: 'analyzing', createdAt: now, updatedAt: now, policyVersion: store.policy().version, profileVersion:p.profileVersion||0, reasons: [], ai: null, mode: input.mode, receipt: null, comment: '' };
-    const created = store.create(r); if (!created.duplicate) void review(r);
+    const created = store.create(r); if (!created.duplicate) startReview(r);
     res.status(created.duplicate ? 200 : 202).json(created);
   });
-  app.post('/api/requests/:id/review', auth, (req, res) => { const r = store.request(String(req.params.id)); if (!r || !visible(res, r)) return res.status(404).json({ error: 'Request not found.' }); if (!['needs_review', 'blocked'].includes(r.status)) return res.status(409).json({ error: 'This request cannot be reviewed again.' }); r.status = 'analyzing'; r.policyVersion = store.policy().version; r.profileVersion = store.get<Person>('people', r.requesterId)?.profileVersion || 0; store.saveRequest(r); void review(r); res.json(r); });
+  app.post('/api/requests/:id/review', auth, (req, res) => { const r = store.request(String(req.params.id)); if (!r || !visible(res, r)) return res.status(404).json({ error: 'Request not found.' }); if (!['needs_review', 'blocked'].includes(r.status)) return res.status(409).json({ error: 'This request cannot be reviewed again.' }); r.status = 'analyzing'; r.policyVersion = store.policy().version; r.profileVersion = store.get<Person>('people', r.requesterId)?.profileVersion || 0; store.saveRequest(r); startReview(r); res.json(r); });
   app.post('/api/requests/:id/decision', auth, owner, (req, res) => {
     const r = store.request(String(req.params.id)); if (!r) return res.status(404).json({ error: 'Request not found.' });
     const action = req.body.action; const note = String(req.body.note || '').trim().slice(0, 1500);

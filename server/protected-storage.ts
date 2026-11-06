@@ -34,7 +34,10 @@ export function protect(value: string) {
 }
 
 export function unprotect(path: string) {
-  const encoded = readFileSync(path, 'utf8');
+  return unprotectValue(readFileSync(path, 'utf8'));
+}
+
+export function unprotectValue(encoded: string) {
   if (encoded.startsWith('v1:')) {
     const key = encryptionKey();
     if (!key) throw new Error('The protected storage key is missing.');

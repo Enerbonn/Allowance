@@ -1,6 +1,6 @@
 # Deploy Allowance on Vercel and Render
 
-Vercel serves the browser app and forwards its API calls to Render. Render runs one copy of the backend with a persistent disk for SQLite, evidence and encrypted Testnet keys. Each deployment contains one owner workspace. Start with fictional records and use Stellar Testnet for the on-chain demo.
+Vercel serves the browser app and forwards its API calls to Render. Render runs one copy of the backend. Use either Supabase persistence on Render Free or a paid Render service with a persistent disk. Each owner has a separate workspace. Start with fictional records and use Stellar Testnet for the on-chain demo.
 
 ## 1. Create the Vercel project
 
@@ -35,6 +35,13 @@ node -p "require('node:crypto').randomBytes(32).toString('base64')" | Set-Clipbo
 ~~~
 
 Save and redeploy, then check `/api/health`. If Render reports a port scan timeout and detects a localhost listener, check `ALLOWANCE_PUBLIC_ORIGIN` first. The Docker image supplies `/data` and reads Render's `PORT` when hosted mode is configured. A Free Web Service uses temporary storage. Use a persistent deployment for funded Testnet escrow. On a Free Web Service, the wallet setup, protected local agent keys, and request records reset when Render spins down, restarts, or redeploys the service. [Free Web Service limits](https://render.com/docs/free#local-files-lost-on-redeploy)
+
+### Use Supabase with the existing Render Free service
+
+1. Create a Free Supabase project for Allowance. Choose the region nearest the Render service. In Supabase, open **Connect → Session pooler** and copy the connection URI. Replace the password placeholder with the database password, URL-encoding it if it contains reserved URL characters. Use TLS and keep the URI private. [Supabase connection options](https://supabase.com/docs/guides/database/connecting-to-postgres)
+2. In **Render → Allowance → Environment**, add the URI as `SUPABASE_DATABASE_URL`. Keep `ALLOWANCE_STORAGE_KEY` stable and private. This key encrypts the stored files and must remain available across deployments. The backend creates its own private Postgres schema at startup. The project does not need a storage bucket or a public API key.
+3. Redeploy and open the Vercel /api/health endpoint. It should report `storage: supabase`. Create a fictional workspace, sign in, write a saved note, then restart the backend and verify the same sign-in and note still work.
+4. Supabase mode keeps the existing SQLite behavior and persists encrypted workspace database files, evidence and protected wallet files in Postgres. It is designed for one Render backend and a small demo, with a 64 MiB cap across the restored files. Testnet records are committed before irreversible blockchain calls. The hosted workspace starts fresh on first connection to an empty project. Importing existing local or tunnel data is a separate step.
 
 ## 3. Connect the gateway and create the owner
 
