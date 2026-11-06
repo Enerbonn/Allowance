@@ -4,6 +4,15 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { GEMINI_PROVIDER, RELMIO_PROVIDER, money, policyChecks, SCALE, type Policy, type Person, type Project, type Task, type Supplier, type SpendRequest, type Event, type Review } from './domain.ts';
 
+export function manilaWeek(now = new Date()) {
+  const offset = 8 * 3600_000;
+  const local = new Date(now.getTime() + offset);
+  local.setUTCHours(0, 0, 0, 0);
+  local.setUTCDate(local.getUTCDate() - (local.getUTCDay() + 6) % 7);
+  const start = local.getTime() - offset;
+  return { start: new Date(start).toISOString(), end: new Date(start + 7 * 86400_000).toISOString() };
+}
+
 export class Store {
   db: DatabaseSync;
   constructor(path = '.local/allowance.sqlite', { sampleData = true } = {}) {
@@ -11,7 +20,9 @@ export class Store {
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS records(kind TEXT NOT NULL,id TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(kind,id));
+      CREATE INDEX IF NOT EXISTS records_person ON records(kind,json_extract(data,'$.personId'));
       CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY,idempotency TEXT UNIQUE NOT NULL,data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS request_requester ON requests(json_extract(data,'$.requesterId'));
       CREATE TABLE IF NOT EXISTS commitments(request_id TEXT PRIMARY KEY,project_id TEXT NOT NULL,amount INTEGER NOT NULL CHECK(amount>0),state TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,person_id TEXT NOT NULL,expires INTEGER NOT NULL);
@@ -29,11 +40,17 @@ export class Store {
         throw error;
       }
     }
+    // Freeze the best available timestamp on older commitments.
+    this.db.exec(`UPDATE requests SET data=json_set(data,'$.committedAt',json_extract(data,'$.updatedAt'))
+      WHERE json_extract(data,'$.committedAt') IS NULL AND id IN (SELECT request_id FROM commitments WHERE state IN ('reserved','paid'))`);
     // An interrupted review remains visible and does not create an untracked payment.
     for (const r of this.requests()) if (r.status === 'analyzing') { r.status = 'needs_review'; r.reasons = ['Review was interrupted. Retry AI review or ask the owner.']; this.saveRequest(r); }
   }
   close() { this.db.close(); }
   list<T>(kind: string): T[] { return (this.db.prepare('SELECT data FROM records WHERE kind=?').all(kind) as { data: string }[]).map(r => JSON.parse(r.data)); }
+  personRecords<T>(kind: string, personId: string): T[] {
+    return (this.db.prepare("SELECT data FROM records WHERE kind=? AND json_extract(data,'$.personId')=? ORDER BY rowid DESC").all(kind, personId) as {data:string}[]).map(row=>JSON.parse(row.data));
+  }
   get<T>(kind: string, id: string): T | undefined { const r = this.db.prepare('SELECT data FROM records WHERE kind=? AND id=?').get(kind, id) as { data: string } | undefined; return r ? JSON.parse(r.data) : undefined; }
   put(kind: string, id: string, value: unknown) { this.db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data').run(kind, id, JSON.stringify(value)); }
   people() { return this.list<Person>('people').sort((a,b) => Number(b.role === 'owner') - Number(a.role === 'owner') || a.name.localeCompare(b.name)); }
@@ -42,6 +59,9 @@ export class Store {
   suppliers() { return this.list<Supplier>('suppliers'); }
   policy() { return this.get<Policy>('policy', 'main')!; }
   requests(): SpendRequest[] { return (this.db.prepare('SELECT data FROM requests ORDER BY rowid DESC').all() as { data: string }[]).map(r => JSON.parse(r.data)); }
+  requestsFor(personId: string): SpendRequest[] {
+    return (this.db.prepare("SELECT data FROM requests WHERE json_extract(data,'$.requesterId')=? ORDER BY rowid DESC").all(personId) as {data:string}[]).map(row=>JSON.parse(row.data));
+  }
   request(id: string) { const r = this.db.prepare('SELECT data FROM requests WHERE id=?').get(id) as { data: string } | undefined; return r ? JSON.parse(r.data) as SpendRequest : undefined; }
   saveRequest(r: SpendRequest) { r.updatedAt = new Date().toISOString(); this.db.prepare('UPDATE requests SET data=? WHERE id=?').run(JSON.stringify(r), r.id); }
   events(): Event[] { return (this.db.prepare('SELECT data FROM events ORDER BY rowid DESC LIMIT 200').all() as { data: string }[]).map(r => JSON.parse(r.data)); }
@@ -50,8 +70,19 @@ export class Store {
     this.db.prepare('INSERT INTO events VALUES(?,?)').run(e.id, JSON.stringify(e)); return e;
   }
   committed(projectId: string, excluding?: string) { const r = this.db.prepare("SELECT COALESCE(SUM(amount),0) total FROM commitments WHERE project_id=? AND state IN ('reserved','paid') AND request_id<>?").get(projectId, excluding ?? '') as { total: number }; return r.total; }
-  memberSpent(personId: string, excluding = '') { return this.requests().filter(r => r.requesterId === personId && r.id !== excluding && ['paid','authorized'].includes(r.status)).reduce((sum,r) => sum + r.amount, 0); }
-  checks(r: SpendRequest) { const p = this.get<Person>('people', r.requesterId)!; return [...policyChecks(r, p, this.get<Task>('tasks', r.taskId), this.get<Supplier>('suppliers', r.supplierId), this.get<Project>('projects', r.projectId), this.policy(), this.committed(r.projectId, r.id)), {label:'Member allowance',pass:p.budget === undefined || this.memberSpent(p.id,r.id)+r.amount<=p.budget,detail:p.budget === undefined ? 'Workspace limits apply.' : `${money(Math.max(0,p.budget-this.memberSpent(p.id,r.id)))} XLM of this member’s total allowance remains.`}, {label:'Member purchasing categories',pass:!p.allowedCategories || p.allowedCategories.includes(r.category),detail:'The member’s permitted categories also apply.'}]; }
+  memberSpent(personId: string, excluding = '') {
+    const row = this.db.prepare(`SELECT COALESCE(SUM(json_extract(data,'$.amount')),0) AS total FROM requests
+      WHERE json_extract(data,'$.requesterId')=? AND id<>? AND json_extract(data,'$.status') IN ('paid','authorized')`).get(personId, excluding) as {total:number};
+    return row.total;
+  }
+  weeklySpent(personId: string, excluding = '', now = new Date()) {
+    const { start, end } = manilaWeek(now);
+    const row = this.db.prepare(`SELECT COALESCE(SUM(c.amount),0) AS total FROM commitments c JOIN requests r ON r.id=c.request_id
+      WHERE c.state IN ('paid','reserved') AND c.request_id<>? AND json_extract(r.data,'$.requesterId')=?
+      AND json_extract(r.data,'$.committedAt')>=? AND json_extract(r.data,'$.committedAt')<?`).get(excluding, personId, start, end) as {total:number};
+    return row.total;
+  }
+  checks(r: SpendRequest) { const p = this.get<Person>('people', r.requesterId)!; const weekly = p.weeklyBudget === undefined ? undefined : Math.max(0, p.weeklyBudget-this.weeklySpent(p.id,r.id)); return [...policyChecks(r, p, this.get<Task>('tasks', r.taskId), this.get<Supplier>('suppliers', r.supplierId), this.get<Project>('projects', r.projectId), this.policy(), this.committed(r.projectId, r.id)), {label:'Member allowance',pass:p.budget === undefined || this.memberSpent(p.id,r.id)+r.amount<=p.budget,detail:p.budget === undefined ? 'Workspace limits apply.' : `${money(Math.max(0,p.budget-this.memberSpent(p.id,r.id)))} XLM of this member’s total allowance remains.`}, {label:'Member weekly cap',pass:weekly === undefined || r.amount <= weekly,detail:weekly === undefined ? 'No separate weekly cap.' : `${money(weekly)} XLM remains under the member’s weekly cap (Manila time).`}, {label:'Member purchasing categories',pass:!p.allowedCategories || p.allowedCategories.includes(r.category),detail:'The member’s permitted categories also apply.'}]; }
   create(r: SpendRequest) {
     const prior = this.db.prepare('SELECT data FROM requests WHERE idempotency=?').get(r.idempotencyKey) as { data: string } | undefined;
     if (prior) { const old = JSON.parse(prior.data) as SpendRequest; if (old.requesterId !== r.requesterId) throw new Error('Request key belongs to another member.'); return { request: old, duplicate: true }; }
@@ -83,7 +114,7 @@ export class Store {
       if (failed.length) throw new Error(failed.map(c => c.detail).join(' '));
       if (r.policyVersion !== this.policy().version) { r.policyVersion = this.policy().version; }
       this.db.prepare("INSERT INTO commitments VALUES(?,?,?,'paid') ON CONFLICT(request_id) DO NOTHING").run(r.id, r.projectId, r.amount);
-      r.status = 'paid'; r.mode = 'simulated'; r.receipt = `SIM-${randomUUID().slice(0, 8).toUpperCase()}`; r.reasons = [];
+      r.committedAt = new Date().toISOString(); r.status = 'paid'; r.mode = 'simulated'; r.receipt = `SIM-${randomUUID().slice(0, 8).toUpperCase()}`; r.reasons = [];
       this.saveRequest(r);
       this.event('Simulated payment completed', `${money(r.amount)} XLM allocated to ${this.get<Supplier>('suppliers', r.supplierId)!.name}. No blockchain transaction occurred.`, actor, r.id, 'payment');
       this.db.exec('COMMIT'); return r;
@@ -133,7 +164,7 @@ export class Store {
     ];
     examples.forEach((e, i) => {
       const r = { ...e, evidenceUrl: `https://${suppliers.find(s => s.id === e.supplierId)!.domain}/quote/sample`, createdAt: new Date(Date.now() - (4 - i) * 3600000).toISOString(), updatedAt: new Date().toISOString(), policyVersion: 1, reasons: e.status === 'blocked' ? ['Equipment is outside the approved policy.', 'This supplier needs owner verification.'] : [], mode: 'simulated', idempotencyKey: `sample-${e.id}`, comment: '' } as SpendRequest;
-      this.create(r); if (r.status === 'paid') this.db.prepare("INSERT INTO commitments VALUES(?,?,?,'paid')").run(r.id, r.projectId, r.amount);
+      if (r.status === 'paid') r.committedAt = r.updatedAt; this.create(r); if (r.status === 'paid') this.db.prepare("INSERT INTO commitments VALUES(?,?,?,'paid')").run(r.id, r.projectId, r.amount);
     });
     this.event('Sample workspace ready', 'All people, projects, suppliers, balances, and purchases in this workspace are fictional demonstration data.', 'Allowance', null, 'system');
   }

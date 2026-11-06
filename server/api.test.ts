@@ -74,7 +74,19 @@ test('Gemini powers the connection check, scoped assistant and purchase review',
     if (context.connectionTest) {
       result = { summary: 'Connected' };
     } else if (context.mode === 'workspace') {
+      if(context.authenticatedPerson.id==='owner') {
+        assert.ok(context.people.some((person:{id:string})=>person.id==='maya'));
+        return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+          reply: 'I prepared a weekly cap for Maya to review.',
+          proposals:[{type:'profile',targetId:'maya',summary:'Set Maya’s weekly cap to 500 XLM.',fields:{weeklyBudget:'500'}}],
+        }) }] } }] });
+      }
       assert.equal(context.authenticatedPerson.id, 'maya');
+      assert.ok(context.history.some((entry:{text:string})=>entry.text.includes('neonprint')));
+      assert.ok(context.requests.some((entry:{id:string})=>entry.id==='REQ-HISTORY'));
+      assert.ok(!JSON.stringify(context).includes('other-member-private'));
+      assert.ok(context.requests.length<=8);
+      assert.ok(context.spendingTotals.simulated.paidXlm);
       assert.ok(context.tasks.every((task: { assigneeId: string }) => task.assigneeId === 'maya'));
       assert.match(payload.systemInstruction.parts[0].text, /spending assistant/i);
       result = { reply: 'Here is a summary of your assigned work.', draft: null, proposals: [] };
@@ -106,9 +118,29 @@ test('Gemini powers the connection check, scoped assistant and purchase review',
     assert.equal(state.model, 'gemini-3.1-flash-lite');
     assert.ok(!JSON.stringify(state).includes('synthetic-test-key'));
 
-    const chat = await localFetch(base + '/assistant', { method: 'POST', headers: memberHeaders, body: JSON.stringify({ message: 'What am I working on?' }) });
+    const old={...store.request('REQ-1044')!,id:'REQ-HISTORY',idempotencyKey:randomUUID(),title:'Neonprint artwork license'};
+    store.create(old);
+    for(let i=0;i<11;i++){
+      store.put('chat','history-'+i,{personId:'maya',role:'user',text:i===0?'neonprint artwork proof':'Ordinary follow-up '+i,createdAt:new Date(Date.UTC(2025,0,i+1)).toISOString()});
+      store.create({...old,id:'new-'+i,idempotencyKey:randomUUID(),title:'Ordinary purchase '+i});
+    }
+    store.put('chat','private',{personId:'leo',role:'user',text:'neonprint other-member-private'});
+    store.put('memory','private',{personId:'leo',text:'neonprint other-member-private'});
+    store.create({...old,id:'REQ-PRIVATE',idempotencyKey:randomUUID(),requesterId:'leo',title:'neonprint other-member-private'});
+    const chat = await localFetch(base + '/assistant', { method: 'POST', headers: memberHeaders, body: JSON.stringify({ message: 'What was the neonprint artwork expense?' }) });
     assert.equal(chat.status, 200);
     assert.match((await chat.json()).text, /assigned work/);
+    const ownerChat=await localFetch(base+'/assistant',{method:'POST',headers:ownerHeaders,body:JSON.stringify({message:'Set Maya’s cap to 500 XLM per week.'})});
+    assert.equal(ownerChat.status,200);
+    const proposal=(await ownerChat.json()).proposals[0];
+    assert.equal(store.people().find(p=>p.id==='maya')?.weeklyBudget,undefined);
+    assert.equal((await localFetch(base+'/proposals/'+proposal.id+'/apply',{method:'POST',headers:memberHeaders})).status,404);
+    assert.equal((await localFetch(base+'/proposals/'+proposal.id+'/apply',{method:'POST',headers:ownerHeaders})).status,200);
+    assert.equal(store.people().find(p=>p.id==='maya')?.weeklyBudget,5_000_000_000);
+    for(let i=0;i<2;i++)assert.equal((await localFetch(base+'/team/maya/toggle',{method:'POST',headers:ownerHeaders})).status,200);
+    assert.equal((await localFetch(base+'/bootstrap',{headers:memberHeaders})).status,401);
+    const retiredCode=await localFetch(base+'/session',{method:'POST',headers,body:JSON.stringify({email:'maya@allowance.example',code:'member-test-code',role:'member'})});
+    assert.equal(retiredCode.status,401);
 
     const review = await localFetch(base + '/requests/REQ-1044/review', { method: 'POST', headers: ownerHeaders });
     assert.equal(review.status, 200);
@@ -121,7 +153,7 @@ test('Gemini powers the connection check, scoped assistant and purchase review',
     const quota = await localFetch(base + '/ai/test', { method: 'POST', headers: ownerHeaders });
     assert.equal(quota.status, 503);
     assert.match((await quota.json()).error, /Gemini quota/);
-    assert.equal(providerCalls.mock.callCount(), 5);
+    assert.equal(providerCalls.mock.callCount(), 6);
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
     store.close();
@@ -204,6 +236,7 @@ test('owner can switch Stellar wallets and keep each wallet’s Testnet setup', 
     assert.equal(next.initialized, false);
     assert.equal(next.gasKeyStored, false);
     assert.equal(next.checks, null);
+    assert.deepEqual(new Set(next.wallets.map((wallet:{owner:string})=>wallet.owner)),new Set([first,second]));
 
     const terms = { label: 'Wallet-specific agent', maxAmount: '12.5', expiresAt: null };
     const savedTerms = await post('/testnet/agent-settings', { address: second, settings: terms }, cookie);
@@ -218,7 +251,10 @@ test('owner can switch Stellar wallets and keep each wallet’s Testnet setup', 
 
     store.put('chain-operations', 'pending', { state: 'sponsored' });
     assert.equal((await post('/testnet/wallet', { address: first }, cookie)).status, 409);
+    assert.equal((await post('/testnet/disconnect', {}, cookie)).status, 409);
     store.put('chain-operations', 'pending', { state: 'claimed' });
+    const disconnected=await (await post('/testnet/disconnect', {}, cookie)).json();
+    assert.equal(disconnected.owner,'');assert.equal(disconnected.wallets.length,2);assert.equal(disconnected.checks,null);
     const restored = await (await post('/testnet/wallet', { address: first }, cookie)).json();
     assert.equal(restored.agent, demoAgent);
     assert.equal(restored.agentSettings, null);

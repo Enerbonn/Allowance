@@ -88,13 +88,21 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   if (!address || project().owner !== address) throw new Error('Connect the owner wallet for these agent settings.');
   store.put('testnet-agent-settings', address, parseAgentSettings(input));
  }
+ function savedWallets() {
+  const saved = new Map(store.list<Project>('testnet-project').map(wallet=>[wallet.owner,wallet]));
+  const original=localProject();
+  const previous=legacy()?.owner;
+  if(original.owner&&(!previous||previous===original.owner)&&!saved.has(original.owner))saved.set(original.owner,original);
+  if(previous&&!saved.has(previous))saved.set(previous,{owner:previous,projectId:''});
+  return [...saved.values()].filter(wallet=>wallet.owner);
+ }
  function safeStatus(){
   const c=config(),active=project();
   const boundSuppliers = store.suppliers().filter(s => {
     const binding = store.get<{merchant: string}>('testnet-supplier', c.owner + ':' + s.id);
     return s.approved && c.merchant && (binding?.merchant || s.destination) === c.merchant;
   }).map(s => s.id);
-  return {...c,projectId:active.projectId,gasStationUrl:active.projectId?`https://www.velo-build.dev/projects/${active.projectId}/gas`:'',initialized:!!c.agent,gasKeyStored:!!availableGasPath(active),agentSettings:agentSettings(c),boundSuppliers,network:'Stellar Testnet',checks:store.get('testnet-checks',c.owner)||(legacy()?.owner===c.owner?store.get('testnet','checks'):null)||null,operations:store.list<any>('chain-operations').map(({signedXdr,...v})=>v)};
+  return {...c,wallets:savedWallets(),projectId:active.projectId,gasStationUrl:active.projectId?`https://www.velo-build.dev/projects/${active.projectId}/gas`:'',initialized:!!c.agent,gasKeyStored:!!availableGasPath(active),agentSettings:agentSettings(c),boundSuppliers,network:'Stellar Testnet',checks:store.get('testnet-checks',c.owner)||(legacy()?.owner===c.owner?store.get('testnet','checks'):null)||null,operations:store.list<any>('chain-operations').map(({signedXdr,...v})=>v)};
  }
  async function inspect(c: WalletConfig) {
   const contracts = await Promise.all(Object.entries(EVENT_CONTRACTS).map(async ([name,address]) => {
@@ -154,6 +162,12 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   store.put('testnet','selection',selection);
   res.json(safeStatus());
  });
+ app.post('/api/testnet/disconnect',auth,owner,(_req,res)=>{
+  assertIdle();
+  if(hasUnsettledPayment())return res.status(409).json({error:'Reconcile the pending Testnet payment before disconnecting the wallet.'});
+  store.put('testnet','selection',{owner:'',projectId:''});
+  res.json(safeStatus());
+ });
  app.post('/api/testnet/gas-key',auth,owner,(req,res)=>{
   assertIdle();
   const active=project();
@@ -179,7 +193,7 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   res.json(safeStatus());
  });
  app.post('/api/testnet/bind-supplier',auth,owner,(req,res)=>{const c=config();if(!c.merchant)throw new Error('Initialize demo accounts first.');const supplier=store.get<Supplier>('suppliers',String(req.body.supplierId));if(!supplier?.approved)throw new Error('Choose an approved supplier.');store.put('testnet-supplier',c.owner+':'+supplier.id,{merchant:c.merchant});store.event('Demo merchant bound',`${supplier.name} points to the dedicated Testnet demo merchant, not a real shop.`,res.locals.person.name,null,'policy');res.json({ok:true});});
- app.post('/api/testnet/prepare',auth,owner,async(req,res)=>{
+ app.post('/api/testnet/prepare',auth,owner,exclusive(async(req,res)=>{
   const c=config();if(!c.agent)throw new Error('Initialize Testnet demo accounts first.');
   const kind=String(req.body.kind);let op:NoirOperation;
   if(kind==='registerDevice')op={kind,deviceHash:c.deviceHash,agent:c.agent};
@@ -195,6 +209,13 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
     op={kind,deviceHash:c.deviceHash};
   }
   else if(kind==='fundEscrow')op={kind,deviceHash:c.deviceHash,token:asset,amount:BigInt(units(String(req.body.amount)))};
+  else if(kind==='defundEscrow'){
+    if(hasUnsettledPayment())throw new Error('Reconcile the pending Testnet payment before withdrawing.');
+    const amount=BigInt(units(String(req.body.amount)));
+    if(await noir.getDeviceOwner(c.deviceHash)!==c.owner)throw new Error('Only the registered device owner can withdraw from escrow.');
+    if(amount>await noir.getEscrowBalance(c.deviceHash))throw new Error('Withdrawal exceeds the confirmed escrow balance.');
+    op={kind,deviceHash:c.deviceHash,token:asset,amount};
+  }
   else throw new Error('Unsupported setup operation.');
   let unsignedXdr: string;
   try { unsignedXdr = await noir.prepare(c.owner, op); }
@@ -204,11 +225,12 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
     }
     throw error;
   }
-  const tx=TransactionBuilder.fromXDR(unsignedXdr,Networks.TESTNET);const id=randomUUID();store.put('wallet-pending',id,{id,hash:tx.hash().toString('hex'),kind,createdAt:Date.now(),state:'pending'});res.json({id,unsignedXdr,owner:c.owner,networkPassphrase:Networks.TESTNET,kind});
- });
+  const tx=TransactionBuilder.fromXDR(unsignedXdr,Networks.TESTNET);const id=randomUUID();store.put('wallet-pending',id,{id,hash:tx.hash().toString('hex'),kind,createdAt:Date.now(),state:'pending',owner:c.owner});res.json({id,unsignedXdr,owner:c.owner,networkPassphrase:Networks.TESTNET,kind});
+ }));
  app.post('/api/testnet/submit-setup',auth,owner,exclusive(async(req,res)=>{
   const c=config(),pending=store.get<any>('wallet-pending',String(req.body.id));if(!pending||pending.state!=='pending'||Date.now()-pending.createdAt>300000)throw new Error('Prepare a fresh wallet transaction.');
-  if (pending.kind === 'revokeAgent' && hasUnsettledPayment()) throw new Error('Reconcile the pending Testnet payment before revoking the agent.');
+  if(pending.owner!==c.owner)throw new Error('The active wallet changed. Prepare a fresh wallet transaction.');
+  if (['revokeAgent','defundEscrow'].includes(pending.kind) && hasUnsettledPayment()) throw new Error('Reconcile the pending Testnet payment before revoking or withdrawing.');
   const signed=String(req.body.signedXdr||'');validateOwnerSetupSignature(signed,pending.hash,c.owner);
   pending.state='submitting';store.put('wallet-pending',pending.id,pending);const hash=await noir.submit(signed);pending.state='confirmed';pending.hash=hash;store.put('wallet-pending',pending.id,pending);store.event('Testnet setup confirmed',`${pending.kind}: ${hash}`,res.locals.person.name,null,'chain');await inspect(c);res.json({hash});
  }));
@@ -222,7 +244,7 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
    if(!String(req.body.note||'').trim())throw new Error('Add an owner decision note.');const failed=store.checks(r).filter(v=>!v.pass);if(failed.length)throw new Error(failed.map(v=>v.detail).join(' '));if(!['needs_review','blocked'].includes(r.status))throw new Error('Request is not available for payment.');
    const agent=getKey(keyName(c,'agent'));const check=await noir.checkPayment({deviceHash:c.deviceHash,agent:agent.publicKey(),asset,amount:BigInt(r.amount)});if(!check.ok)throw new Error(`Noir refused payment: ${check.reason}`);
    const nonce=BigInt(Math.max(Date.now(),Number(store.setting('chain-nonce')||0)+1));const op:any={id,nonce:String(nonce),state:'reserved',createdAt:new Date().toISOString()};
-   store.db.exec('BEGIN IMMEDIATE');try{const again=store.checks(r).filter(v=>!v.pass);if(again.length)throw new Error('Budget or access changed.');store.setSetting('chain-nonce',String(nonce));store.db.prepare("INSERT INTO commitments VALUES(?,?,?,'reserved')").run(r.id,r.projectId,r.amount);r.status='authorized';r.comment=String(req.body.note).slice(0,1500);store.saveRequest(r);store.put('chain-operations',id,op);store.db.exec('COMMIT');}catch(e){store.db.exec('ROLLBACK');throw e;}
+   store.db.exec('BEGIN IMMEDIATE');try{const again=store.checks(r).filter(v=>!v.pass);if(again.length)throw new Error('Budget or access changed.');store.setSetting('chain-nonce',String(nonce));store.db.prepare("INSERT INTO commitments VALUES(?,?,?,'reserved')").run(r.id,r.projectId,r.amount);r.committedAt=new Date().toISOString();r.status='authorized';r.comment=String(req.body.note).slice(0,1500);store.saveRequest(r);store.put('chain-operations',id,op);store.db.exec('COMMIT');}catch(e){store.db.exec('ROLLBACK');throw e;}
    try{
     const unsigned=await noir.prepare(agent.publicKey(),{kind:'authorize',deviceHash:c.deviceHash,merchant:c.merchant,asset,amount:BigInt(r.amount),nonce});const tx=TransactionBuilder.fromXDR(unsigned,Networks.TESTNET);if(!('source' in tx)||tx.source!==agent.publicKey())throw new Error('Unexpected agent transaction.');tx.sign(agent);op.transactionHash=tx.hash().toString('hex');store.put('chain-operations',id,op);
     const reservation=await velo.gas.sponsor(tx.toXDR(),{idempotencyKey:'allowance:'+id,correlationId:id});op.identity={requestId:reservation.requestId,transactionHash:reservation.transactionHash};op.state='sponsored';store.put('chain-operations',id,op);

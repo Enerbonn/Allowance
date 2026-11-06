@@ -10,6 +10,7 @@ export const memberProfileFields = z.object({
   goal: z.string().trim().max(1000).optional(),
   spendingGuidance: z.string().trim().max(1000).optional(),
   budget: z.string().nullable().optional(),
+  weeklyBudget: z.string().nullable().optional(),
   allowedCategories: z.array(z.enum(categories)).min(1).optional(),
 }).strict();
 
@@ -40,7 +41,7 @@ export function createSetupRecord(store: Store, kind: SetupKind, fields: unknown
       record = {
         ...member, id, role: 'member', active: true,
         initials: member.name.split(/\s+/).map(word => word[0]).slice(0, 2).join('').toUpperCase(),
-        budget: memberBudget(member.budget),
+        budget: memberBudget(member.budget), weeklyBudget: memberBudget(member.weeklyBudget),
       } satisfies Person;
       break;
     }

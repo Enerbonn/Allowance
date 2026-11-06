@@ -37,8 +37,8 @@ The local demo works before wallet setup. Use these steps when you want to try t
 ### 2. Connect your wallet in Allowance
 
 1. Open [Allowance](http://127.0.0.1:4310/) in the browser with your wallet, choose **Business owner** and sign in and open **Connections → Connect the payment path → Connect owner wallet**.
-2. Choose your provider from the Stellar Wallets Kit picker and approve the connection in your wallet. Allowance remembers the selected public account. To change accounts, select another account in your wallet and connect again. Each wallet keeps its own Noir setup and Velo project. An unresolved Testnet payment must be reconciled before switching.
-3. Click **Initialize demo accounts** and **Inspect contracts**. Then use **Register device**, **Review and sign authorization**, and **Review and sign deposit**, in that order. Review each Testnet signature in your wallet. To change an existing authorization, sign its revocation before signing the replacement.
+2. Choose your provider from the Stellar Wallets Kit picker and approve the connection in your wallet. Allowance remembers the selected public account. Use **Saved wallet** to switch between previously added accounts. Use **Connect or add wallet** to add another or reconnect the selected account before signing. Each keeps its own Noir setup and Velo project. An unresolved Testnet payment must be reconciled before switching or disconnecting.
+3. Click **Initialize demo accounts** and **Inspect contracts**. Then use **Register device**, **Review and sign authorization**, and **Review and sign deposit**, in that order. Review each Testnet signature in your wallet. To change an existing authorization, sign its revocation before signing the replacement. After funding, **Manage Noir escrow** shows the last checked balance and lets you review and sign a withdrawal back to the registered owner wallet.
 
 ### 3. Link Velo and try a payment
 

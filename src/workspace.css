@@ -38,3 +38,12 @@
 .assistant-setup-links button{min-height:44px}
 .proposal-card label{display:grid;gap:6px;font-size:13px;margin:8px 0}
 .proposal-card label input{border:1px solid var(--border);border-radius:7px;padding:9px;min-width:0}
+
+.spending-monitor { margin-block: 24px; }
+.spending-monitor-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%, 170px),1fr)); gap:10px; margin:0; }
+.spending-monitor-grid > div { border:1px solid #d5e4de; border-radius:12px; padding:14px 16px; background:#f7fbf9; }
+.spending-monitor-grid dt, .spending-monitor-grid small { font-size:.8rem; color:#466459; }
+.spending-monitor-grid dd { margin:3px 0; font-weight:750; overflow-wrap:anywhere; }
+.chat-sources { font-size:.8rem; margin-top:.6rem; }
+.chat-sources summary { cursor:pointer; }
+.chat-sources ul { margin:.35rem 0; padding-inline-start:1.2rem; }

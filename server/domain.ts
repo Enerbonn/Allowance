@@ -26,12 +26,12 @@ export const policySchema = z.object({
   autoPay: z.boolean(), paused: z.boolean(), description: z.string().max(4000),
 });
 export type Policy = { id: string; version: number; perRequest: number; autoLimit: number; projectLimit: number; allowedCategories: string[]; requireEvidence: boolean; autoPay: boolean; paused: boolean; description: string };
-export type Person = { id: string; name: string; role: 'owner' | 'member'; title: string; initials: string; active: boolean; email?: string; description?: string; goal?: string; spendingGuidance?: string; budget?: number; allowedCategories?: string[]; profileVersion?: number };
+export type Person = { id: string; name: string; role: 'owner' | 'member'; title: string; initials: string; active: boolean; email?: string; description?: string; goal?: string; spendingGuidance?: string; budget?: number; weeklyBudget?: number; allowedCategories?: string[]; profileVersion?: number };
 export type Project = { id: string; name: string; description: string; budget: number; active: boolean };
 export type Task = { id: string; projectId: string; assigneeId: string; title: string; description: string; active: boolean };
 export type Supplier = { id: string; name: string; category: string; domain: string; approved: boolean; destination: string };
 export type Review = { recommendation: 'approve' | 'review' | 'decline'; summary: string; reasoning: string[]; missingInformation: string[]; model?: string; provider: string };
-export type SpendRequest = { id: string; title: string; taskId: string; projectId: string; requesterId: string; supplierId: string; category: string; amount: number; purpose: string; evidenceUrl: string; status: 'analyzing' | 'needs_review' | 'blocked' | 'authorized' | 'paid' | 'declined' | 'cancelled'; createdAt: string; updatedAt: string; policyVersion: number; reasons: string[]; ai: Review | null; mode: 'simulated' | 'testnet'; receipt: string | null; idempotencyKey: string; comment: string; evidenceId?: string; profileVersion?: number; };
+export type SpendRequest = { id: string; title: string; taskId: string; projectId: string; requesterId: string; supplierId: string; category: string; amount: number; purpose: string; evidenceUrl: string; status: 'analyzing' | 'needs_review' | 'blocked' | 'authorized' | 'paid' | 'declined' | 'cancelled'; createdAt: string; updatedAt: string; policyVersion: number; reasons: string[]; ai: Review | null; mode: 'simulated' | 'testnet'; receipt: string | null; idempotencyKey: string; comment: string; evidenceId?: string; profileVersion?: number; committedAt?: string; };
 export type Event = { id: string; requestId: string | null; actor: string; title: string; detail: string; createdAt: string; kind: string };
 export type Check = { label: string; pass: boolean; detail: string };
 

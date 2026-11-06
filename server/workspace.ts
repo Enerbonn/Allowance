@@ -2,10 +2,11 @@ import type { Express, Request, RequestHandler } from 'express';
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
+import { retrieve, spendingSummary } from './assistant-context.ts';
 import { redact, requestsOverride, sanitize } from './assistant-safety.ts';
 import { createSetupRecord, memberBudget, memberProfileFields, setupSchemas } from './setup.ts';
 import { agentSettingsSchema, parseAgentSettings, type installTestnet } from './testnet.ts';
-import { Store } from './store.ts';
+import { Store, manilaWeek } from './store.ts';
 import { categories, emailSchema, units, money, type Person } from './domain.ts';
 
 const instructions = readFileSync(new URL('./agent-instructions.md', import.meta.url), 'utf8');
@@ -32,7 +33,7 @@ export function verifyAccessCode(store:Store,id:string,code:string) {
   const hash=scryptSync(code.slice(0,128),c?.salt||'not-an-account',32);
   return !!c && timingSafeEqual(hash,Buffer.from(c.hash,'hex'));
 }
-export function publicMember(store:Store,p:Person) { return {...p,codeSet:!!store.get('credentials',p.id),spent:store.memberSpent(p.id),description:p.description||store.tasks().filter(t=>t.assigneeId===p.id).map(t=>t.description).join(' ')}; }
+export function publicMember(store:Store,p:Person) { return {...p,codeSet:!!store.get('credentials',p.id),spent:store.memberSpent(p.id),weeklySpent:store.weeklySpent(p.id),weeklyResetAt:manilaWeek().end,description:p.description||store.tasks().filter(t=>t.assigneeId===p.id).map(t=>t.description).join(' ')}; }
 export function assistantMember(store:Store,p:Person) {
   const {email, codeSet, ...profile}=publicMember(store,p);
   return profile;
@@ -116,12 +117,13 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
   app.get('/api/team-directory',o.auth,o.owner,(_req,res)=>res.json(store.people().map(p=>publicMember(store,p))));
   app.post('/api/team/:id/code',o.auth,o.owner,(req,res)=>{
     const id=String(req.params.id);const p=store.get<Person>('people',id);if(!p||p.role==='owner')return res.status(400).json({error:'Choose a team member.'});
+    if(!p.active)return res.status(409).json({error:'Restore member access before issuing a new code.'});
     if(!p.email)return res.status(400).json({error:'Add the member’s sign-in email before issuing a code.'});
     const code='allowance_'+randomBytes(18).toString('base64url');setAccessCode(store,id,code);store.event('Member code reset',`New private access issued for ${p.name}; prior sessions ended.`,res.locals.person.name,null,'access');res.json({email:p.email,code});
   });
   app.put('/api/team/:id/profile',o.auth,o.owner,(req,res)=>{
     const id=String(req.params.id);const p=store.get<Person>('people',id);if(!p||p.role==='owner')return res.status(400).json({error:'Choose a team member.'});
-    const fields=profileFields.extend({email:emailSchema.optional()}).parse(req.body);if(fields.email)uniqueEmail(fields.email,p.id);const emailChanged=!!fields.email&&fields.email!==p.email;const next={...p,...fields,budget:memberBudget(fields.budget,p.budget),profileVersion:(p.profileVersion||0)+1};
+    const fields=profileFields.extend({email:emailSchema.optional()}).parse(req.body);if(fields.email)uniqueEmail(fields.email,p.id);const emailChanged=!!fields.email&&fields.email!==p.email;const next={...p,...fields,budget:memberBudget(fields.budget,p.budget),weeklyBudget:memberBudget(fields.weeklyBudget,p.weeklyBudget),profileVersion:(p.profileVersion||0)+1};
     next.initials=next.name.split(/\s+/).map(v=>v[0]).slice(0,2).join('').toUpperCase();store.db.exec('BEGIN IMMEDIATE');
     try {
       store.put('people',id,next);
@@ -134,8 +136,18 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
   app.delete('/api/memory/:id',o.auth,(req,res)=>{const n=store.get<any>('memory',String(req.params.id));const p=res.locals.person as Person;if(!n||(n.personId!==p.id&&!(p.role==='owner'&&n.personId==='workspace')))return res.status(404).json({error:'Note not found.'});store.db.prepare('DELETE FROM records WHERE kind=? AND id=?').run('memory',n.id);res.json({ok:true});});
   app.post('/api/assistant',o.auth,async(req,res)=>{
     const message=redact(z.string().trim().min(3).max(3000).parse(req.body.message));const p=res.locals.person as Person;const isOwner=p.role==='owner';
-    const tasks=store.tasks().filter(t=>isOwner||t.assigneeId===p.id);const requests=store.requests().filter(r=>isOwner||r.requesterId===p.id);
-    const history=store.list<any>('chat').filter(m=>m.personId===p.id).sort((a,b)=>a.createdAt.localeCompare(b.createdAt)).slice(-10).map(m=>({role:m.role,text:m.text}));
+    const tasks=store.tasks().filter(t=>isOwner||t.assigneeId===p.id);const requests=isOwner?store.requests():store.requestsFor(p.id);
+    const chats=store.personRecords<{role:string;text:string;createdAt:string}>('chat',p.id);
+    const history=retrieve(message,chats,m=>m.text,10,6).sort((a,b)=>a.createdAt.localeCompare(b.createdAt)).map(m=>({role:m.role,text:m.text.slice(0,1200)}));
+    const names=new Map(store.people().map(person=>[person.id,person.name]));
+    const suppliers=store.suppliers();
+    const projects=store.projects().filter(project=>isOwner||tasks.some(task=>task.projectId===project.id));
+    const requestIds=new Set(requests.map(r=>r.id));
+    const sources=retrieve(message,requests,r=>[r.id,r.title,r.purpose,r.category,r.status,names.get(r.requesterId),suppliers.find(s=>s.id===r.supplierId)?.name,projects.find(pr=>pr.id===r.projectId)?.name].join(' '),8,3);
+    const ledger=sources.map(r=>({id:r.id,title:r.title,purpose:r.purpose.slice(0,900),requesterId:r.requesterId,requester:names.get(r.requesterId),amountXlm:money(r.amount),status:r.status,mode:r.mode,createdAt:r.createdAt,committedAt:r.committedAt}));
+    const activity=retrieve(message,store.events().filter(e=>isOwner||Boolean(e.requestId&&requestIds.has(e.requestId))),e=>[e.requestId,e.title,e.detail].join(' '),5,2).map(({requestId,title,detail,createdAt})=>({requestId,title,detail:detail.slice(0,400),createdAt}));
+    const notes=[...store.personRecords<{text:string;createdAt:string}>('memory',p.id),...store.personRecords<{text:string;createdAt:string}>('memory','workspace')].sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+    const memory=retrieve(message,notes,n=>n.text,6,2).map(n=>n.text.slice(0,900));
     const save=(role:string,text:string,extra={})=>{const entry={id:randomUUID(),personId:p.id,role,text,createdAt:new Date().toISOString(),...extra};store.put('chat',entry.id,entry);return entry;};
     save('user',message);
     if(requestsOverride(message))return res.json(save('assistant','Only the verified owner can change spending rules. I can help you with an assigned task or prepare a request within the current policy.',{draft:null,proposals:[]}));
@@ -146,7 +158,8 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
         agentSettings:paymentSetup.agentSettings, veloProjectLinked:!!paymentSetup.projectId,
         gasKeySaved:paymentSetup.gasKeyStored, contractStatus:paymentSetup.checks,
         merchantLinked:paymentSetup.boundSuppliers.length>0, currentTime:new Date().toISOString(),
-      },history,authenticatedPerson:assistantMember(store,p),people:isOwner?store.people().map(x=>assistantMember(store,x)):[assistantMember(store,p)],tasks,projects:store.projects().filter(project=>isOwner||tasks.some(task=>task.projectId===project.id)).map(project=>({...project,committed:store.committed(project.id)})),suppliers:store.suppliers(),categories,policy:store.policy(),requests:requests.slice(0,30),activity:store.events().filter(e=>isOwner||requests.some(r=>r.id===e.requestId)).slice(0,20),memory:store.list<any>('memory').filter(n=>n.personId===p.id||n.personId==='workspace'),moneyUnits:'All numeric stored budgets are integer stroops. Divide by 10000000 for XLM. Proposal amounts must be decimal XLM strings.'});
+      },history,authenticatedPerson:assistantMember(store,p),people:isOwner?store.people().map(x=>assistantMember(store,x)):[assistantMember(store,p)],tasks,projects:projects.map(project=>({...project,committed:isOwner?store.committed(project.id):undefined})),suppliers,categories,policy:store.policy(),requests:ledger,activity,memory,spendingTotals:spendingSummary(requests),moneyUnits:'Stored budgets, committed project totals, and member usage are integer stroops. Fields ending in Xlm and proposal amounts are already decimal XLM. Weekly caps reset Mondays in Manila.'});
+
       const answer=z.object({reply:z.string().min(1).max(7000),draft:draftSchema.nullable().default(null),proposals:z.array(proposalSchema).max(3).default([]),model:z.string().optional()}).parse(sanitize(result));
       if(isOwner)answer.draft=null;
       if(answer.draft&&(!tasks.some(t=>t.id===answer.draft!.taskId&&t.active&&t.assigneeId===p.id)||!store.suppliers().some(s=>s.id===answer.draft!.supplierId&&s.approved&&s.category===answer.draft!.category)))answer.draft=null;
@@ -161,6 +174,9 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
       for(const proposal of answer.proposals){
         if(!isOwner&&proposal.type!=='memory')continue;
         if(proposal.type==='profile'&&(!profileFields.safeParse(proposal.fields).success||!store.people().some(x=>x.id===proposal.targetId&&x.role==='member')))continue;
+        if(proposal.type==='profile'||proposal.type==='member'){
+          try { memberBudget(proposal.fields.budget as string|null|undefined); memberBudget(proposal.fields.weeklyBudget as string|null|undefined); } catch { continue; }
+        }
         if(proposal.type==='policy'&&!policyFields.safeParse(proposal.fields).success)continue;
         if(proposal.type==='memory'&&(!memoryFields.safeParse(proposal.fields).success||(proposal.targetId!==p.id&&!(isOwner&&proposal.targetId==='workspace'))))continue;
         if(Object.hasOwn(proposalFields,proposal.type)&&!proposalFields[proposal.type as keyof typeof proposalFields].safeParse(proposal.fields).success)continue;
@@ -171,7 +187,7 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
         }
         const stored={...proposal,id:randomUUID(),personId:p.id,state:'pending',policyVersion:store.policy().version,profileVersion:store.get<Person>('people',proposal.targetId)?.profileVersion||0};store.put('proposals',stored.id,stored);proposals.push(stored);
       }
-      o.connected(answer.model);res.json(save('assistant',redact(answer.reply),{draft:answer.draft,proposals,model:answer.model}));
+      o.connected(answer.model);res.json(save('assistant',redact(answer.reply),{draft:answer.draft,proposals,model:answer.model,sources:ledger.map(({id,title})=>({id,title}))}));
     }catch(error){o.failed(error);res.status(503).json(save('assistant','The assistant couldn’t complete this response. Your message is saved. Check Connections or continue setting up your workspace.',{draft:null,error:'The assistant couldn’t complete the response. See Connections.'}));}
   });
   app.post('/api/proposals/:id/apply',o.auth,(req,res)=>{
@@ -180,7 +196,7 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
     if(v.type!=='memory'&&p.role!=='owner')return res.status(403).json({error:'Only the owner can apply this change.'});
     store.db.exec('BEGIN IMMEDIATE');
     try {
-      if(v.type==='profile'){const member=store.get<Person>('people',v.targetId);if(!member||member.role==='owner')throw new Error('Member not found.');if((member.profileVersion||0)!==v.profileVersion)throw new Error('Profile changed. Ask for a fresh proposal.');const f=profileFields.parse(v.fields);store.put('people',member.id,{...member,...f,budget:memberBudget(f.budget,member.budget),profileVersion:(member.profileVersion||0)+1});}
+      if(v.type==='profile'){const member=store.get<Person>('people',v.targetId);if(!member||member.role==='owner')throw new Error('Member not found.');if((member.profileVersion||0)!==v.profileVersion)throw new Error('Profile changed. Ask for a fresh proposal.');const f=profileFields.parse(v.fields);store.put('people',member.id,{...member,...f,budget:memberBudget(f.budget,member.budget),weeklyBudget:memberBudget(f.weeklyBudget,member.weeklyBudget),profileVersion:(member.profileVersion||0)+1});}
       if(v.type==='policy'){if(store.policy().version!==v.policyVersion)throw new Error('Policy changed. Ask for a fresh proposal.');const f=policyFields.parse(v.fields),policy={...store.policy(),...f,version:store.policy().version+1};for(const field of ['perRequest','autoLimit','projectLimit'] as const)policy[field]=f[field]===undefined?store.policy()[field]:units(f[field]!);if(policy.autoLimit>policy.perRequest||policy.perRequest>policy.projectLimit)throw new Error('Automatic limit must be within request and project limits.');store.put('policy','main',policy);}
       if(v.type==='memory'){const f=memoryFields.parse(v.fields);if(v.targetId!==p.id&&!(p.role==='owner'&&v.targetId==='workspace'))throw new Error('Note access denied.');if(store.list('memory').length>=200)throw new Error('Remove an old memory note first.');const id=randomUUID();store.put('memory',id,{id,personId:v.targetId,text:redact(f.text),createdAt:new Date().toISOString()});}
       if(v.type==='agent')o.testnet.saveAgentSettings(v.targetId,v.fields);

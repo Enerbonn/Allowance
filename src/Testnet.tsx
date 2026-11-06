@@ -19,6 +19,7 @@ function getWalletKit() {
 
 export type TestnetStatus = {
   owner: string;
+  wallets: {owner: string; projectId: string}[];
   projectId: string;
   asset: string;
   agentSettings: { label: string; maxAmount: string | null; expiresAt: string | null } | null;
@@ -28,7 +29,7 @@ export type TestnetStatus = {
   gasKeyStored: boolean;
   agent?: string;
   merchant?: string;
-  checks: { contracts: {name: string; exists: boolean}[]; error?: string; deviceOwner?: string; escrow?: string; policy?: {agent: string; asset: string; maxAmount: string; expiresAt: string | null} } | null;
+  checks: { checkedAt?: string; contracts: {name: string; exists: boolean}[]; error?: string; deviceOwner?: string; escrow?: string; policy?: {agent: string; asset: string; maxAmount: string; expiresAt: string | null} } | null;
   operations: { id: string; state: string; error?: string; transactionHash?: string; claimHash?: string }[];
 };
 type Supplier = { id: string; name: string; approved: boolean };
@@ -69,7 +70,8 @@ export function TestnetPanel({ data, focus }: { data: { suppliers: Supplier[]; p
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [wallet, setWallet] = useState('');
-  const [deposit, setDeposit] = useState('50');
+  const [deposit, setDeposit] = useState('');
+  const [withdrawal, setWithdrawal] = useState('');
   const [supplier, setSupplier] = useState('');
   const [message, setMessage] = useState('');
   const [projectInput, setProjectInput] = useState('');
@@ -134,6 +136,7 @@ export function TestnetPanel({ data, focus }: { data: { suppliers: Supplier[]; p
     setProjectInput(selected.projectId);
     loadAgentTerms(selected);
     setGasKey('');
+    setDeposit('');setWithdrawal('');
     setMessage('Testnet wallet connected. You can switch accounts from your wallet extension.');
   }
 
@@ -150,7 +153,7 @@ export function TestnetPanel({ data, focus }: { data: { suppliers: Supplier[]; p
         expiresAt: expiryEnabled ? new Date(expiry).toISOString() : null,
       }});
     }
-    const pending = await api('/testnet/prepare', { kind, amount: deposit });
+    const pending = await api('/testnet/prepare', { kind, amount: kind === 'defundEscrow' ? withdrawal : deposit });
     const signed = await kit.signTransaction(pending.unsignedXdr, { networkPassphrase: pending.networkPassphrase, address: pending.owner });
     if (!signed.signedTxXdr) throw new Error('The wallet did not sign.');
     return api('/testnet/submit-setup', { id: pending.id, signedXdr: signed.signedTxXdr });
@@ -167,8 +170,15 @@ export function TestnetPanel({ data, focus }: { data: { suppliers: Supplier[]; p
     <ol className="testnet-steps">
       <li id="testnet-step-wallet">
         <h3>Choose your owner wallet</h3>
-        <p>Choose a wallet that supports Stellar Testnet signing. To switch, select another account in your wallet and connect again.</p>
-        <button className="secondary-btn" disabled={!!busy} onClick={() => void run('wallet connection', connect)}><Wallet size={15}/>{connected ? 'Connect or switch wallet' : 'Connect owner wallet'}</button>
+        <p>Add any supported Stellar Testnet account. Select one saved wallet to manage at a time. Reconnect it to sign.</p>
+        <button className="secondary-btn" disabled={!!busy} onClick={() => void run('wallet connection', connect)}><Wallet size={15}/>{state.owner ? 'Connect or add wallet' : 'Connect owner wallet'}</button>
+        {state.wallets.length > 0 && <label>Saved wallet<select value={state.owner} disabled={!!busy} onChange={e => {const address=e.target.value;if(!address)return;void run('wallet switch',async()=>{
+          const next:TestnetStatus=await api('/testnet/wallet',{address});setWallet('');setProjectInput(next.projectId);setGasKey('');setDeposit('');setWithdrawal('');loadAgentTerms(next);
+        });}}><option value="" disabled>Choose a saved wallet</option>{state.wallets.map(w => <option key={w.owner} value={w.owner}>{w.owner.slice(0,8)}…{w.owner.slice(-6)}{w.projectId ? ' · Velo linked' : ''}</option>)}</select></label>}
+        {state.owner && <button className="text-btn" disabled={!!busy} onClick={() => void run('wallet disconnect',async()=>{
+          await api('/testnet/disconnect',{});setWallet('');setProjectInput('');setGasKey('');setDeposit('');setWithdrawal('');if(walletKit)await (await walletKit).disconnect().catch(()=>{});
+          setMessage('Wallet disconnected. Saved settings and past payments are still available.');
+        })}>Disconnect active wallet</button>}
         {state.owner && <small>{connected ? 'Connected' : 'Saved wallet'} · {state.owner}</small>}
         {connected && <a className="text-btn" href={'https://friendbot.stellar.org/?addr=' + encodeURIComponent(wallet)} target="_blank" rel="noreferrer">Fund a new wallet with Friendbot <ExternalLink size={14}/></a>}
       </li>
@@ -204,11 +214,15 @@ export function TestnetPanel({ data, focus }: { data: { suppliers: Supplier[]; p
         </form>
       </li>
       <li id="testnet-step-escrow">
-        <h3>Fund Noir escrow</h3>
-        <p>Choose how much test XLM to deposit from your owner wallet.</p>
+        <h3>Manage Noir escrow</h3>
+        <p>Deposit test XLM or withdraw it back to the registered owner wallet. Each action requires your signature.</p>
+        <div className="testnet-actions"><span>{state.checks?.escrow!==undefined&&!state.checks.error?`Last checked balance: ${Number(state.checks.escrow)/1e7} XLM`:'Check the current escrow balance on Testnet.'}</span><button className="text-btn" disabled={!!busy||!state.owner} onClick={() => void run('escrow balance', () => api('/testnet/inspect', {}))}><RefreshCw size={14}/>Refresh balance</button></div>
         <div className="testnet-actions">
           <label>Escrow deposit (XLM)<input inputMode="decimal" value={deposit} onChange={e => setDeposit(e.target.value)}/></label>
-          <button className="secondary-btn" disabled={!!busy || !connected || state.checks?.deviceOwner !== state.owner} onClick={() => void run('escrow deposit', () => sign('fundEscrow'))}>Review and sign deposit</button>
+          <button className="secondary-btn" disabled={!!busy || !connected || !deposit.trim() || state.checks?.deviceOwner !== state.owner} onClick={() => void run('escrow deposit', async () => {const result=await sign('fundEscrow');setDeposit('');return result;})}>Review and sign deposit</button>
+        </div><div className="testnet-actions">
+          <label>Escrow withdrawal (XLM)<input inputMode="decimal" value={withdrawal} onChange={e => setWithdrawal(e.target.value)}/></label>
+          <button className="secondary-btn" disabled={!!busy || !connected || !withdrawal.trim() || state.checks?.deviceOwner !== state.owner} onClick={() => void run('escrow withdrawal', async () => {const result=await sign('defundEscrow');setWithdrawal('');return result;})}>Review and sign withdrawal</button>
         </div>
       </li>
       <li id="testnet-step-velo">

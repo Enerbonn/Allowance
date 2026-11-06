@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { Store } from './store.ts';
+import { Store, manilaWeek } from './store.ts';
 import { units, money, offlineReview, type SpendRequest } from './domain.ts';
 
 function candidate(s: Store, amount = '20', id = randomUUID()): SpendRequest {
@@ -77,4 +77,31 @@ test('supplier category and quote host constrain automatic payments', () => {
   assert.equal(store.setReview(mismatchedQuote.id, reviewed).status, 'needs_review');
   assert.equal(store.committed('launch'), units('28'));
   store.close();
+});
+
+test('weekly cap counts reservations and payments and resets at Manila midnight', () => {
+  const s = new Store(':memory:');
+  try {
+    s.db.prepare('DELETE FROM commitments WHERE request_id=?').run('REQ-1042');
+    const member=s.people().find(p=>p.id==='maya')!;
+    member.weeklyBudget=units('25');
+    s.put('people',member.id,member);
+    const old=candidate(s,'20');
+    old.mode='testnet';old.status='authorized';old.committedAt='2020-11-01T15:59:59.999Z';
+    s.create(old);
+    s.db.prepare("INSERT INTO commitments VALUES(?,?,?,'reserved')").run(old.id,old.projectId,old.amount);
+    const newWeek=new Date('2020-11-01T16:00:00Z');
+    assert.equal(manilaWeek(newWeek).start,newWeek.toISOString());
+    assert.equal(s.weeklySpent(member.id,'',new Date(newWeek.getTime()-1)),old.amount);
+    assert.equal(s.weeklySpent(member.id,'',newWeek),0);
+    const pending=candidate(s,'20');
+    pending.mode='testnet';pending.status='authorized';pending.committedAt=new Date().toISOString();
+    s.create(pending);
+    s.db.prepare("INSERT INTO commitments VALUES(?,?,?,'reserved')").run(pending.id,pending.projectId,pending.amount);
+    const second=candidate(s,'6');s.create(second);
+    assert.throws(()=>s.pay(second.id,'Owner'),/weekly cap/);
+    const exact=candidate(s,'5');s.create(exact);
+    s.pay(exact.id,'Owner');
+    assert.equal(s.weeklySpent(member.id),units('25'));
+  } finally { s.close(); }
 });
