@@ -82,7 +82,7 @@ test('Gemini powers the connection check, scoped assistant and purchase review',
       if(context.authenticatedPerson.id==='owner') {
         assert.ok(context.people.some((person:{id:string})=>person.id==='maya'));
         return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({
-          reply: 'I prepared a weekly cap for Maya to review.',
+          scope: 'workspace', reply: 'I prepared a weekly cap for Maya to review.',
           proposals:[{type:'profile',targetId:'maya',summary:'Set Maya’s weekly cap to 500 XLM.',fields:{weeklyBudget:'500'}}],
         }) }] } }] });
       }
@@ -94,7 +94,7 @@ test('Gemini powers the connection check, scoped assistant and purchase review',
       assert.ok(context.spendingTotals.simulated.paidXlm);
       assert.ok(context.tasks.every((task: { assigneeId: string }) => task.assigneeId === 'maya'));
       assert.match(payload.systemInstruction.parts[0].text, /spending assistant/i);
-      result = { reply: 'Here is a summary of your assigned work.', draft: null, proposals: [] };
+      result = { scope: 'workspace', reply: 'Here is a summary of your assigned work.', draft: null, proposals: [] };
     } else {
       assert.ok(context.request.title);
       result = { recommendation: 'review', summary: 'Owner review needed.', reasoning: [], missingInformation: [] };

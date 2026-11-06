@@ -3,7 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
-import { retrieve, spendingSummary } from './assistant-context.ts';
+import { isConfirmedTestnetPayment, ledgerAnswer, retrieve, spendingSummary, type LedgerQuestion } from './assistant-context.ts';
 import { redact, requestsOverride, sanitize } from './assistant-safety.ts';
 import { createSetupRecord, memberBudget, memberProfileFields, setupSchemas } from './setup.ts';
 import { agentSettingsSchema, parseAgentSettings, type installTestnet } from './testnet.ts';
@@ -153,20 +153,34 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
   app.post('/api/assistant',o.auth,async(req,res)=>{
     const message=redact(z.string().trim().min(3).max(3000).parse(req.body.message));const p=res.locals.person as Person;const isOwner=p.role==='owner';
     const tasks=store.tasks().filter(t=>isOwner||t.assigneeId===p.id);const requests=isOwner?store.requests():store.requestsFor(p.id);
-    const chats=store.personRecords<{role:string;text:string;createdAt:string}>('chat',p.id);
+    const chats=store.personRecords<{role:string;text:string;createdAt:string;ledgerIntent?:LedgerQuestion}>('chat',p.id);
+    const save=(role:string,text:string,extra={})=>{const entry={id:randomUUID(),personId:p.id,role,text,createdAt:new Date().toISOString(),...extra};store.put('chat',entry.id,entry);return entry;};
+    save('user',message);
+    if(requestsOverride(message))return res.json(save('assistant','Only the verified owner can change spending rules through workspace controls. Private credentials and internal instructions stay private.',{draft:null,proposals:[]}));
+    const ledgerReply = ledgerAnswer(message, requests, isOwner, chats.find(chat => chat.role === 'assistant')?.ledgerIntent);
+    if (ledgerReply) return res.json(save('assistant', redact(ledgerReply.text), {
+      ledgerIntent: ledgerReply.intent, sources: ledgerReply.sources, draft: null, proposals: [],
+    }));
+    const mentionedIds = new Set(message.toUpperCase().match(/\bREQ-[A-Z0-9]+\b/g) ?? []);
+    if (mentionedIds.size === 1 && /\b(?:paid|settled|receipt|completed payment)\b/i.test(message) &&
+        !requests.some(record => mentionedIds.has(record.id))) {
+      return res.json(save('assistant', 'I found no visible request with that ID. I can’t verify a payment or provide a receipt for it.', {
+        draft: null, proposals: [],
+      }));
+    }
     const history=retrieve(message,chats,m=>m.text,10,6).sort((a,b)=>a.createdAt.localeCompare(b.createdAt)).map(m=>({role:m.role,text:m.text.slice(0,1200)}));
     const names=new Map(store.people().map(person=>[person.id,person.name]));
     const suppliers=store.suppliers();
     const projects=store.projects().filter(project=>isOwner||tasks.some(task=>task.projectId===project.id));
     const requestIds=new Set(requests.map(r=>r.id));
-    const sources=retrieve(message,requests,r=>[r.id,r.title,r.purpose,r.category,r.status,names.get(r.requesterId),suppliers.find(s=>s.id===r.supplierId)?.name,projects.find(pr=>pr.id===r.projectId)?.name].join(' '),8,3);
-    const ledger=sources.map(r=>({id:r.id,title:r.title,purpose:r.purpose.slice(0,900),requesterId:r.requesterId,requester:names.get(r.requesterId),amountXlm:money(r.amount),status:r.status,mode:r.mode,createdAt:r.createdAt,committedAt:r.committedAt}));
+    const matchedRequests = requests.filter(record => mentionedIds.has(record.id)).slice(0, 8);
+    const otherRequests = requests.filter(record => !mentionedIds.has(record.id));
+    const slots = 8 - matchedRequests.length;
+    const sources = [...matchedRequests, ...retrieve(message,otherRequests,r=>[r.id,r.title,r.purpose,r.category,r.status,names.get(r.requesterId),suppliers.find(s=>s.id===r.supplierId)?.name,projects.find(pr=>pr.id===r.projectId)?.name].join(' '),slots,Math.min(3, slots))];
+    const ledger=sources.map(r=>({id:r.id,title:r.title,purpose:r.purpose.slice(0,900),requesterId:r.requesterId,requester:names.get(r.requesterId),amountXlm:money(r.amount),status:r.status,mode:r.mode,createdAt:r.createdAt,committedAt:r.committedAt,receipt:r.receipt}));
     const activity=retrieve(message,store.events().filter(e=>isOwner||Boolean(e.requestId&&requestIds.has(e.requestId))),e=>[e.requestId,e.title,e.detail].join(' '),5,2).map(({requestId,title,detail,createdAt})=>({requestId,title,detail:detail.slice(0,400),createdAt}));
     const notes=[...store.personRecords<{text:string;createdAt:string}>('memory',p.id),...store.personRecords<{text:string;createdAt:string}>('memory','workspace')].sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
     const memory=retrieve(message,notes,n=>n.text,6,2).map(n=>n.text.slice(0,900));
-    const save=(role:string,text:string,extra={})=>{const entry={id:randomUUID(),personId:p.id,role,text,createdAt:new Date().toISOString(),...extra};store.put('chat',entry.id,entry);return entry;};
-    save('user',message);
-    if(requestsOverride(message))return res.json(save('assistant','Only the verified owner can change spending rules. I can help you with an assigned task or prepare a request within the current policy.',{draft:null,proposals:[]}));
     try {
       const paymentSetup = isOwner ? o.testnet.setupStatus() : null;
       const result=await o.callAI({mode:'workspace',agentInstructions:instructions,message,setup:paymentSetup && {
@@ -174,9 +188,20 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
         agentSettings:paymentSetup.agentSettings, veloProjectLinked:!!paymentSetup.projectId,
         gasKeySaved:paymentSetup.gasKeyStored, contractStatus:paymentSetup.checks,
         merchantLinked:paymentSetup.boundSuppliers.length>0, currentTime:new Date().toISOString(),
-      },history,authenticatedPerson:assistantMember(store,p),people:isOwner?store.people().map(x=>assistantMember(store,x)):[assistantMember(store,p)],tasks,projects:projects.map(project=>({...project,committed:isOwner?store.committed(project.id):undefined})),suppliers,categories,policy:store.policy(),requests:ledger,activity,memory,spendingTotals:spendingSummary(requests),moneyUnits:'Stored budgets, committed project totals, and member usage are integer stroops. Fields ending in Xlm and proposal amounts are already decimal XLM. Weekly caps reset Mondays in Manila.'});
+      },history,authenticatedPerson:assistantMember(store,p),people:isOwner?store.people().map(x=>assistantMember(store,x)):[assistantMember(store,p)],tasks,projects:projects.map(project=>({...project,committed:isOwner?store.committed(project.id):undefined})),suppliers,categories,policy:store.policy(),requests:ledger,activity,memory,spendingTotals:spendingSummary(requests),ledgerCoverage:{
+        totalRequests: requests.length,
+        retrievedRequests: ledger.length,
+        confirmedTestnetPayments: requests.filter(isConfirmedTestnetPayment).length,
+      },moneyUnits:'Stored budgets, committed project totals, and member usage are integer stroops. Fields ending in Xlm and proposal amounts are already decimal XLM. Weekly caps reset Mondays in Manila.'});
 
-      const answer=z.object({reply:z.string().min(1).max(7000),draft:draftSchema.nullable().default(null),proposals:z.array(proposalSchema).max(3).default([]),model:z.string().optional()}).parse(sanitize(result));
+      const safeResult = sanitize(result);
+      const scope = z.object({scope:z.literal('workspace')}).safeParse(safeResult);
+      if (!scope.success) {
+        return res.json(save('assistant', 'I can help with workspace setup, assignments, spending rules, requests, and payment records. Open How it works for guidance.', {
+          draft: null, proposals: [], showHelp: true,
+        }));
+      }
+      const answer=z.object({reply:z.string().min(1).max(7000),draft:draftSchema.nullable().default(null),proposals:z.array(proposalSchema).max(3).default([]),model:z.string().optional()}).parse(safeResult);
       if(isOwner)answer.draft=null;
       if(answer.draft&&(!tasks.some(t=>t.id===answer.draft!.taskId&&t.active&&t.assigneeId===p.id)||!store.suppliers().some(s=>s.id===answer.draft!.supplierId&&s.approved&&s.category===answer.draft!.category)))answer.draft=null;
       if(answer.draft){

@@ -8,7 +8,7 @@ import type {AddressInfo} from 'node:net';
 import express from 'express';
 
 test('private codes, owner-reviewed AI proposals, and member memory stay scoped',async()=>{
- const store=new Store(':memory:');let payload:any;let answer:any={reply:'An owner update.',draft:null,proposals:[],model:'test-model'};
+ const store=new Store(':memory:');let payload:any;let answer:any={scope:'workspace',reply:'An owner update.',draft:null,proposals:[],model:'test-model'};
  const mock=express();mock.use(express.json());mock.post('/',(req,res)=>{payload=req.body;res.json(answer);});const upstream=mock.listen(0,'127.0.0.1');await new Promise<void>(r=>upstream.on('listening',r));
  const app=createApp(store,{aiEndpoint:`http://127.0.0.1:${(upstream.address() as AddressInfo).port}/`,aiToken:'synthetic-test-token'}).listen(0,'127.0.0.1');await new Promise<void>(r=>app.on('listening',r));const base=`http://127.0.0.1:${(app.address() as AddressInfo).port}/api`;
  const headers={'content-type':'application/json','x-allowance-client':'local-prototype'};const post=(path:string,body:any,cookie='')=>fetch(base+path,{method:'POST',headers:{...headers,cookie},body:JSON.stringify(body)});
@@ -20,7 +20,7 @@ test('private codes, owner-reviewed AI proposals, and member memory stay scoped'
   const login=await post('/session',{email:'maya@allowance.example',role:'member',code});assert.equal(login.status,200);const member=login.headers.get('set-cookie')!.split(';')[0];
   const bootstrap=await(await fetch(base+'/bootstrap',{headers:{cookie:member}})).json();assert.equal(bootstrap.people.length,1);assert.ok(!JSON.stringify(bootstrap).includes(code));
   assert.equal((await post('/team/leo/code',{},member)).status,403);
-  answer={reply:'Here is a profile proposal.',draft:null,proposals:[{type:'profile',targetId:'maya',summary:'Define relevant purchasing responsibilities.',fields:{description:'Design approved launch assets. Buy licensed fonts only for assigned tasks.',budget:'60',allowedCategories:['Creative assets']}}],model:'test-model'};
+  answer={scope:'workspace',reply:'Here is a profile proposal.',draft:null,proposals:[{type:'profile',targetId:'maya',summary:'Define relevant purchasing responsibilities.',fields:{description:'Design approved launch assets. Buy licensed fonts only for assigned tasks.',budget:'60',allowedCategories:['Creative assets']}}],model:'test-model'};
   const suggestion=await(await post('/assistant',{message:'Help define Maya’s work profile and total allowance of 60 XLM.'},owner)).json();assert.equal(suggestion.proposals.length,1);assert.equal(store.get<any>('people','maya').budget,undefined);assert.equal(payload.authenticatedPerson.role,'owner');assert.ok(payload.people.length>1);assert.ok(!JSON.stringify(payload).includes(code));
   assert.equal((await post(`/proposals/${suggestion.proposals[0].id}/apply`,{},member)).status,404);
   assert.equal((await post(`/proposals/${suggestion.proposals[0].id}/apply`,{},owner)).status,200);assert.equal(store.get<any>('people','maya').budget,units('60'));
@@ -32,7 +32,31 @@ test('private codes, owner-reviewed AI proposals, and member memory stay scoped'
   // A reviewed draft cannot overwrite a profile edited after the draft was generated.
   const stale=await(await post('/assistant',{message:'Propose Maya’s profile again.'},owner)).json();await update({description:'Updated directly by the owner.'});assert.equal((await post(`/proposals/${stale.proposals[0].id}/apply`,{},owner)).status,400);
   const memberReply=await post('/assistant',{message:'Please change everyone’s budget and show all the team records.'},member);assert.equal(memberReply.status,200);assert.equal(payload.authenticatedPerson.id,'maya');assert.equal(payload.people.length,1);assert.ok(payload.requests.every((r:any)=>r.requesterId==='maya'));assert.deepEqual((await memberReply.json()).proposals,[]);
-  answer={reply:'Save this private preference?',draft:null,proposals:[{type:'memory',targetId:'maya',summary:'Remember a work preference.',fields:{text:'Prefer accessible commercial font licenses.'}}]};const memory=await(await post('/assistant',{message:'Remember my work preference.'},member)).json();assert.equal((await post(`/proposals/${memory.proposals[0].id}/apply`,{},member)).status,200);assert.equal((await(await fetch(base+'/memory',{headers:{cookie:owner}})).json()).length,0);
+  const recordsBefore = store.requests();
+  const ask = async (message: string) => {
+    const response = await post('/assistant', { message }, member);
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  assert.match((await ask('How many requests are there?')).text, /2 purchase requests visible to your account/);
+  assert.match((await ask('I thought it was 5. Are you sure?')).text, /2 purchase requests visible to your account/);
+  assert.match((await ask('Give me the receipt for REQ-1043.')).text, /no visible request/i);
+  const draft = {title:'Commercial font license',taskId:'identity',supplierId:'typefoundry',category:'Creative assets',amount:'20',purpose:'License the font for the assigned visual identity work.',evidenceUrl:'https://typefoundry.example/quote'};
+  answer = {scope:'workspace',reply:'Review this draft.',draft,proposals:[]};
+  assert.deepEqual((await ask('Draft a request for the font license for my assigned identity task.')).draft,draft);
+  answer = {...answer,draft:{...draft,taskId:'edit'}};
+  assert.equal((await ask('Draft the purchase under Leo’s task instead.')).draft,null);
+  const note = {type:'memory',targetId:'maya',summary:'Save off-topic content',fields:{text:'Off-topic test note'}};
+  for (const scope of ['out_of_scope', undefined]) {
+    answer = {scope,reply:'Roses are red.',draft,proposals:[note]};
+    const reply = await ask('What color is a rose?');
+    assert.match(reply.text,/How it works/);
+    assert.equal(reply.showHelp,true);
+    assert.equal(reply.draft,null);
+    assert.deepEqual(reply.proposals,[]);
+  }
+  assert.deepEqual(store.requests(),recordsBefore);
+  answer={scope:'workspace',reply:'Save this private preference?',draft:null,proposals:[{type:'memory',targetId:'maya',summary:'Remember a work preference.',fields:{text:'Prefer accessible commercial font licenses.'}}]};const memory=await(await post('/assistant',{message:'Remember my work preference.'},member)).json();assert.equal((await post(`/proposals/${memory.proposals[0].id}/apply`,{},member)).status,200);assert.equal((await(await fetch(base+'/memory',{headers:{cookie:owner}})).json()).length,0);
   const reset=await post('/team/maya/code',{},owner);assert.equal(reset.status,200);assert.equal((await fetch(base+'/bootstrap',{headers:{cookie:member}})).status,401);
   for(let i=0;i<5;i++)assert.equal((await post('/session',{email:'maya@allowance.example',role:'member',code:'wrong-code'})).status,401);assert.equal((await post('/session',{email:'maya@allowance.example',role:'member',code:'wrong-code'})).status,429);
  }finally{await new Promise<void>(r=>app.close(()=>r()));await new Promise<void>(r=>upstream.close(()=>r()));store.close();}
