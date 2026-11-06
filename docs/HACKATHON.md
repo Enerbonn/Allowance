@@ -22,7 +22,7 @@ These override the installed SDK’s bundled defaults. Check the event’s curre
 
 ## Wallet and Testnet tutorial on Windows
 
-The local demo works before wallet setup. Use these steps when you want to try the on-chain flow with test XLM. Use a desktop browser with Varial installed and run Allowance in that same browser.
+The local demo works before wallet setup. Use these steps when you want to try the on-chain flow with test XLM. Use a desktop browser with a wallet that supports Stellar Testnet signing. The example uses Varial.
 
 ### 1. Create and fund a Stellar Testnet wallet
 
@@ -34,28 +34,19 @@ The local demo works before wallet setup. Use these steps when you want to try t
    https://friendbot.stellar.org/?addr=YOUR_STELLAR_TESTNET_PUBLIC_ADDRESS
    ```
 
-### 2. Register your Velo project and connect it to Allowance
+### 2. Connect your wallet in Allowance
 
-1. Open [Velo Build](https://www.velo-build.dev/), connect the same wallet, create a project, then select **Register Project On-Chain**. Review and sign on Stellar Testnet. Copy the project ID from `/projects/<projectId>/...` in the project page URL.
-2. In the Allowance repository, create the folder `.local` if needed. Inside it, create `testnet-project.json` with the two public values below.
+1. Open [Allowance](http://127.0.0.1:4310/) in the browser with your wallet, choose **Business owner** and sign in and open **Connections → Connect the payment path → Connect owner wallet**.
+2. Choose your provider from the Stellar Wallets Kit picker and approve the connection in your wallet. Allowance remembers the selected public account. To change accounts, select another account in your wallet and connect again. Each wallet keeps its own Noir setup and Velo project. An unresolved Testnet payment must be reconciled before switching.
+3. Click **Initialize demo accounts** and **Inspect contracts**. Then use **Register device**, **Authorize agent for 48 hours**, and **Review & sign deposit**, in that order. Review each Testnet signature in your wallet.
 
-   ```json
-   {
-     "owner": "YOUR_STELLAR_TESTNET_PUBLIC_ADDRESS",
-     "projectId": "YOUR_VELO_PROJECT_ID"
-   }
-   ```
+### 3. Link Velo and try a payment
 
-3. Open [Allowance](http://127.0.0.1:4310/) in the browser with Varial, sign in as `owner` and go to **Connections → Connect the payment path**. Refresh the page if you just saved the file. The expected wallet address should match Varial.
-4. Click **Initialize demo accounts** to fund the local agent and merchant, then **Inspect contracts**. Click **Connect owner wallet** and approve the browser connection. The button changes to **Owner wallet connected**. Connecting the wallet grants address access. The setup operations below prompt for signatures separately.
+1. In [Velo Build](https://www.velo-build.dev/), create a project with the same wallet and select **Register Project On-Chain**. Sign on Stellar Testnet. Copy a Velo project page URL containing `/projects/<projectId>/` and paste it into **Velo project URL or ID** in Allowance. Click **Save project**.
+2. Configure **Gas Station** for that project with a funded Testnet relayer, sponsorship enabled and permissions for the Noir contracts. Create a scoped **Testnet Gas** key, enter it in Allowance’s password field and click **Save Gas key**. Allowance stores it encrypted for your Windows user. [Velo Gas Station guide](https://github.com/Velo-Ecosystem-Collection/Velo/blob/main/docs/velo-gas-station.md)
+3. Choose an approved supplier and select **Use dedicated demo merchant**. Sign in as a member and submit a **Stellar Testnet** request for that supplier and an assigned task. Sign back in as owner to review and authorize it. Check **Connections** for the authorization and merchant-claim hashes.
 
-If Velo reports **Account not found**, verify Friendbot funded the same public address and that Test Net is selected. If Allowance reports a different wallet, switch Varial to the account that registered the Velo project and reconnect. If a contract cannot be verified after a Testnet reset, check the organizer’s current contract list before continuing.
-
-### 3. Try a payment
-
-1. In Allowance, use **Register device**, **Authorize agent for 48 hours**, and **Review & sign deposit**, in that order. Review the operation and test amounts in your wallet before signing each one.
-2. In Velo, configure **Gas Station** for your project with a funded Testnet relayer, sponsorship enabled and permissions for the Noir contracts. Create a scoped **Testnet Gas** key. From the repository folder in PowerShell, run `./Save-GasKey.ps1` and enter your key in its hidden prompt. The app stores it encrypted for your Windows user. [Velo Gas Station guide](https://github.com/Velo-Ecosystem-Collection/Velo/blob/main/docs/velo-gas-station.md)
-3. Back in Allowance, choose an approved supplier and select **Use dedicated demo merchant**. Sign in as a member and submit a **Stellar Testnet** request for that supplier and an assigned task. Sign back in as owner to review and authorize the request. Check **Connections** for the authorization and merchant-claim hashes.
+If Velo reports **Account not found**, verify Friendbot funded the same public address and that Testnet is selected. If a contract cannot be verified after a Testnet reset, check the organizer’s current contract list before continuing.
 
 Allowance marks the request paid after the merchant claim is confirmed. The on-chain flow still needs a successful end-to-end test. Use the local simulation for a demo you can run immediately.
 
@@ -63,7 +54,7 @@ Allowance marks the request paid after the merchant claim is confirmed. The on-c
 
 | Tool | What it does |
 | --- | --- |
-| [Varial](https://varialwallet.com/) and [Freighter API](https://github.com/stellar/freighter) | Connect the owner’s browser wallet and sign the prepared Testnet operations. |
+| [Stellar Wallets Kit](https://github.com/Creit-Tech/Stellar-Wallets-Kit) and [Varial](https://varialwallet.com/) | Connect the owner’s browser wallet and sign the prepared Testnet operations. |
 | [Stellar JavaScript SDK](https://github.com/stellar/js-stellar-sdk) and [Stellar Testnet](https://developers.stellar.org/docs/networks) | Build, inspect and submit Stellar transactions, and read the test ledger. |
 | [Friendbot](https://github.com/stellar/friendbot) | Funds the owner, agent and demo merchant with test XLM. |
 | [Noir](https://github.com/noirx402/noir) and `@noirx402/agent-sdk` | Prepare operations for device registration, agent permissions and escrow. |

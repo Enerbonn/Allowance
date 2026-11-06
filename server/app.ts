@@ -45,7 +45,7 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
       store.setReview(r.id, offlineReview());
     }
   }
-  installWorkspace(app, store, { auth, owner, callAI: ai.call, connected: aiConnected, failed: aiFailed });
+  installWorkspace(app, store, { auth, owner, sessionPerson: person, callAI: ai.call, connected: aiConnected, failed: aiFailed });
   installTestnet(app,store,auth,owner);
   app.get('/api/health', (_req, res) => res.json({ ok: true, app: 'Allowance', paymentMode: 'simulated' }));
   app.delete('/api/session', auth, (req, res) => { const p = req.headers.cookie?.match(/allowance_session=([^;]+)/)?.[1]; if (p) store.db.prepare('DELETE FROM sessions WHERE token=?').run(p); res.clearCookie('allowance_session'); res.json({ ok: true }); });

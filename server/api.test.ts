@@ -4,6 +4,7 @@ import { Store } from './store.ts';
 import { createApp } from './app.ts';
 import type { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
+import { Keypair } from '@stellar/stellar-sdk';
 import { units } from './domain.ts';
 import {setAccessCode} from './workspace.ts';
 
@@ -159,9 +160,65 @@ test('blank workspace starts with owner signup and supports a separately issued 
     assert.equal(issued.status, 200);
     const { personId, code } = await issued.json();
     assert.equal(personId, member.id);
-    const signedIn = await post('/session', { personId, code });
+    assert.equal((await post('/session', { personId, code, role: 'owner' })).status, 401);
+    assert.equal((await post('/session', { personId: 'owner', code: 'synthetic-owner-code', role: 'member' })).status, 401);
+    assert.equal((await (await fetch(base + '/auth/status', { headers: { cookie: ownerCookie } })).json()).sessionRole, 'owner');
+    const signedIn = await post('/session', { personId, code, role: 'member' });
     assert.equal(signedIn.status, 200);
     assert.equal((await signedIn.json()).person.role, 'member');
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    store.close();
+  }
+});
+
+test('owner can switch Stellar wallets and keep each wallet’s Testnet setup', async () => {
+  const store = new Store(':memory:', { sampleData: false });
+  const first = Keypair.random().publicKey();
+  const second = Keypair.random().publicKey();
+  const demoAgent = Keypair.random().publicKey();
+  store.put('testnet', 'config', { owner: first, deviceHash: 'legacy-device', agent: demoAgent });
+  store.put('testnet', 'checks', { escrow: '500000000', contracts: [] });
+  const server = createApp(store).listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+  const headers = { 'content-type': 'application/json', 'x-allowance-client': 'local-prototype' };
+  const post = (path: string, payload: unknown, cookie = '') => fetch(base + path, {
+    method: 'POST', headers: { ...headers, cookie }, body: JSON.stringify(payload),
+  });
+  try {
+    assert.equal((await post('/testnet/wallet', { address: second })).status, 401);
+    const signup = await post('/auth/setup', { name: 'Wallet Owner', code: 'synthetic-owner-code' });
+    assert.equal(signup.status, 200);
+    const cookie = signup.headers.get('set-cookie')!.split(';')[0];
+    const current = await (await fetch(base + '/testnet', { headers: { cookie } })).json();
+    assert.equal(current.owner, first);
+    assert.equal(current.agent, demoAgent);
+    assert.equal((await post('/testnet/wallet', { address: 'bad-address' }, cookie)).status, 400);
+
+    const selected = await post('/testnet/wallet', { address: second }, cookie);
+    assert.equal(selected.status, 200);
+    const next = await selected.json();
+    assert.equal(next.owner, second);
+    assert.equal(next.projectId, '');
+    assert.equal(next.initialized, false);
+    assert.equal(next.gasKeyStored, false);
+    assert.equal(next.checks, null);
+
+    const linked = await post('/testnet/wallet', { address: second, projectId: 'test-project' }, cookie);
+    assert.equal(linked.status, 200);
+    assert.equal((await linked.json()).projectId, 'test-project');
+    assert.equal((await post('/testnet/gas-key', { address: first, projectId: 'test-project' }, cookie)).status, 409);
+
+    store.put('chain-operations', 'pending', { state: 'sponsored' });
+    assert.equal((await post('/testnet/wallet', { address: first }, cookie)).status, 409);
+    store.put('chain-operations', 'pending', { state: 'claimed' });
+    const restored = await (await post('/testnet/wallet', { address: first }, cookie)).json();
+    assert.equal(restored.agent, demoAgent);
+    assert.equal(restored.checks.escrow, '500000000');
+    assert.equal((await (await post('/testnet/wallet', { address: second }, cookie)).json()).projectId, 'test-project');
+    assert.equal(store.people().length, 1);
+    assert.equal(store.people()[0].name, 'Wallet Owner');
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
     store.close();

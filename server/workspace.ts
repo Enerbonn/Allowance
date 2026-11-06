@@ -1,4 +1,4 @@
-import type { Express, RequestHandler } from 'express';
+import type { Express, Request, RequestHandler } from 'express';
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
@@ -24,12 +24,12 @@ export function verifyAccessCode(store:Store,id:string,code:string) {
 export function publicMember(store:Store,p:Person) { return {...p,codeSet:!!store.get('credentials',p.id),spent:store.memberSpent(p.id),description:p.description||store.tasks().filter(t=>t.assigneeId===p.id).map(t=>t.description).join(' ')}; }
 const redact = (text:string) => text.replace(/\btg_test_[a-f0-9]{32}\b/gi,'[credential removed]').replace(/\b(?:code|password|passcode)\s*[:=]\s*\S+/gi,'[private code removed]');
 
-export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;owner:RequestHandler;callAI:(body:Record<string,unknown>)=>Promise<any>;connected:(model?:string)=>void;failed:(error:unknown)=>void}) {
+export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;owner:RequestHandler;sessionPerson:(req:Request)=>Person|undefined;callAI:(body:Record<string,unknown>)=>Promise<any>;connected:(model?:string)=>void;failed:(error:unknown)=>void}) {
   // One-time migration removes the old identity-only demo sessions.
   if (!store.setting('access-v2')) {store.db.prepare('DELETE FROM sessions').run();store.setSetting('access-v2','enabled');}
   const workspaceOwner=store.get<Person>('people','owner');if(workspaceOwner?.title==='Studio owner'){workspaceOwner.title='Workspace owner';store.put('people','owner',workspaceOwner);}
   const attempts=new Map<string,{count:number;until:number}>();
-  app.get('/api/auth/status',(_req,res)=>res.json({setupRequired:!store.get('credentials','owner')}));
+  app.get('/api/auth/status',(req,res)=>{const session=o.sessionPerson(req);res.json({setupRequired:!store.get('credentials','owner'),sessionRole:session?.active?session.role:undefined});});
   app.get('/api/demo-identities',(_req,res)=>res.json([]));
   app.post('/api/auth/setup',(req,res)=>{
     if(store.get('credentials','owner')) return res.status(409).json({error:'Owner access is already configured.'});
@@ -38,12 +38,12 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
     res.cookie('allowance_session',store.session(p.id),{httpOnly:true,sameSite:'strict',maxAge:12*3600000});res.json({person:p});
   });
   app.post('/api/session',(req,res)=>{
-    const v=z.object({personId:z.string().max(100),code:z.string().min(1).max(128)}).safeParse(req.body);
+    const v=z.object({personId:z.string().max(100),code:z.string().min(1).max(128),role:z.enum(['owner','member']).optional()}).safeParse(req.body);
     if(!v.success)return res.status(401).json({error:'Sign in with your member ID and private code.'});
     const key=`${req.ip}:${v.data.personId}`; const prior=attempts.get(key); const a=prior&&prior.until>Date.now()?prior:{count:0,until:Date.now()+15*60000};attempts.set(key,a);
     if(a.count>=5)return res.status(429).json({error:'Too many attempts. Try again in 15 minutes.'});a.count++;
     const p=store.get<Person>('people',v.data.personId);
-    if(!verifyAccessCode(store,v.data.personId,v.data.code)||!p?.active)return res.status(401).json({error:'Member ID or private code is incorrect, or access is paused.'});
+    if(!verifyAccessCode(store,v.data.personId,v.data.code)||!p?.active||(v.data.role&&p.role!==v.data.role))return res.status(401).json({error:'Member ID or private code is incorrect, or access is paused.'});
     attempts.delete(key);res.cookie('allowance_session',store.session(p.id),{httpOnly:true,sameSite:'strict',maxAge:12*3600000});res.json({person:p});
   });
   app.get('/api/team-directory',o.auth,o.owner,(_req,res)=>res.json(store.people().map(p=>publicMember(store,p))));

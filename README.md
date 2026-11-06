@@ -25,14 +25,14 @@ Open [Allowance on port 4310](http://127.0.0.1:4310/). On Windows, after the fir
 | Try the owner and member workflow | **Start here.** Run the commands above, then follow the demo below. No API key, Docker, or wallet needed. |
 | Chat with the assistant | Create a Gemini API key, add it to `.env.local`, restart and test the connection. [Gemini quick setup](docs/AI-SETUP.md#option-1-use-gemini-directly) |
 | Reproduce the original ChatGPT workflow | Use your own n8n instance and Relmio connection. [Relmio and n8n setup](docs/AI-SETUP.md#option-2-use-chatgpt-through-relmio-and-n8n) |
-| Connect a wallet and try Stellar Testnet | Create and fund a test wallet, register a Velo project and connect it in Allowance. [Wallet and Testnet tutorial](docs/HACKATHON.md#wallet-and-testnet-tutorial-on-windows) |
+| Connect a wallet and try Stellar Testnet | Create and fund a test wallet, connect it in Allowance and link a registered Velo project when ready to pay. [Wallet and Testnet tutorial](docs/HACKATHON.md#wallet-and-testnet-tutorial-on-windows) |
 
 ### Try both roles
 
-1. At **Set up owner access**, enter your name and create a private code of at least eight characters. Use member ID **`owner`** and that code when you return. A fresh workspace starts with no sample records.
+1. Choose **Business owner**. At **Set up owner access**, enter your name and create a private code of at least eight characters. Choose **Business owner** and enter your code when you return. A fresh workspace starts with no sample records.
 2. In **Team**, select **Add member**. Use **Ask AI** on that profile if you want help drafting responsibilities and spending limits. Review suggestions before applying them.
 3. In **Projects**, create a project with a budget, then assign a task to the member. In **Spending policy**, add an approved supplier and review the spending limits and evidence rules.
-4. Back in **Team**, select **Issue code** for the member and save the member ID and private code shown once. Open your account menu and sign out, then sign in as that member.
+4. Back in **Team**, select **Issue code** for the member and save the member ID and private code shown once. Open your account menu and sign out, then choose **Team member** and sign in with their ID and code.
 5. Make a request for the assigned task and approved supplier. Choose **Local simulation**. Return as owner, review the checks, and approve an eligible request with a decision note. Open the simulated receipt and check the remaining project balance.
 
 For a prefilled demo, stop the current server and start a separate database from PowerShell. These settings apply to that terminal:
@@ -56,7 +56,7 @@ Member budgets are lifetime totals across projects. Zero blocks spending while k
 | Access and AI context | scrypt, server sessions, Markdown instructions | [server/workspace.ts](server/workspace.ts), [server/agent-instructions.md](server/agent-instructions.md) |
 | Persistence and checks | SQLite, SQL, integer XLM amounts | [server/store.ts](server/store.ts), [server/domain.ts](server/domain.ts) |
 | AI | Gemini API directly, or ChatGPT through n8n and Relmio | [Importable n8n workflow](n8n/allowance-review.json), [AI setup guide](docs/AI-SETUP.md) |
-| Testnet | Freighter-compatible wallet API, Stellar SDK, Noir Agent SDK, Velo SDK | [src/Testnet.tsx](src/Testnet.tsx), [server/testnet.ts](server/testnet.ts) |
+| Testnet | Stellar Wallets Kit, Stellar SDK, Noir Agent SDK, Velo SDK | [src/Testnet.tsx](src/Testnet.tsx), [server/testnet.ts](server/testnet.ts) |
 
 ```mermaid
 flowchart TD

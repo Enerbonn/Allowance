@@ -5,3 +5,10 @@
 .workspace-dialog{border:0;padding:0;background:transparent;max-width:calc(100vw - 32px);max-height:94dvh;border-radius:20px;color:var(--ink)}.workspace-dialog::backdrop{background:#08212688;backdrop-filter:blur(5px)}.workspace-dialog .access-card{max-height:90dvh}.team-table-wrap:focus-visible{outline:3px solid var(--blue)}
 
 .table-scroll-hint{display:none;font-size:11px;color:var(--slate);margin-bottom:12px}.team-table td{overflow-wrap:anywhere}@media(max-width:760px){.table-scroll-hint{display:block}}
+
+.role-options{display:grid;gap:12px}
+.role-option.secondary-btn{justify-content:flex-start;text-align:left;white-space:normal;gap:14px;min-height:72px;padding:14px 16px}
+.role-option>svg{flex:none;color:var(--emerald)}
+.role-option>span{display:grid;gap:4px;flex:1}
+.role-option small{font-weight:500;color:var(--slate)}
+.role-back{align-self:flex-start;min-height:44px}

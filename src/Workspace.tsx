@@ -1,16 +1,78 @@
 import React,{useEffect,useState,useRef} from 'react';
-import {KeyRound,Plus,Sparkles,ShieldCheck,Save,X,Copy,Trash2,LogIn,Users,LoaderCircle} from 'lucide-react';
+import {KeyRound,Plus,Sparkles,ShieldCheck,Save,X,Copy,Trash2,LogIn,Users,LoaderCircle,ArrowLeft,ChevronRight} from 'lucide-react';
 import './workspace.css';
 const fmt=(v:number)=>new Intl.NumberFormat('en',{maximumFractionDigits:7}).format(v/1e7);
 async function api(path:string,init:RequestInit={}){const r=await fetch('/api'+path,{...init,headers:{'content-type':'application/json','x-allowance-client':'local-prototype'}});const v=await r.json();if(!r.ok)throw new Error(v.error||'Please try again.');return v;}
 
 function WorkspaceDialog({label,close,children}:{label:string;close:()=>void;children:React.ReactNode}) {const ref=useRef<HTMLDialogElement>(null);useEffect(()=>{const active=document.activeElement as HTMLElement;ref.current?.showModal();return()=>active?.focus();},[]);return <dialog ref={ref} className="workspace-dialog" aria-label={label} onCancel={close}>{children}</dialog>;}
 
-export function SignIn({ready}:{ready:()=>Promise<void>}){
- const [setup,setSetup]=useState(false),[id,setId]=useState(''),[name,setName]=useState(''),[code,setCode]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
- useEffect(()=>{api('/auth/status').then(v=>setSetup(v.setupRequired)).catch(e=>setError(e.message));},[]);
- async function submit(e:React.FormEvent){e.preventDefault();setBusy(true);setError('');try{await api(setup?'/auth/setup':'/session',{method:'POST',body:JSON.stringify(setup?{name,code}:{personId:id.trim(),code})});setCode('');await ready();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
- return <form className="signin-panel" onSubmit={submit}><span className="access-symbol"><KeyRound size={25}/></span><h2>{setup?'Set up owner access':'Your team’s spending desk'}</h2><p>{setup?'Create your private owner code. You’ll use member ID “owner” to return.':'Owners use member ID “owner”. Team members use the ID and private code issued by their owner.'}</p>{setup?<label>Your name<input autoComplete="name" required minLength={2} maxLength={80} value={name} onChange={e=>setName(e.target.value)}/></label>:<label>Member ID<input autoComplete="username" required value={id} onChange={e=>setId(e.target.value)} placeholder="owner or your member ID"/></label>}<label>Private access code<input type="password" autoComplete={setup?'new-password':'current-password'} required minLength={setup?8:1} maxLength={128} value={code} onChange={e=>setCode(e.target.value)} placeholder={setup?'At least 8 characters':'Your private code'}/></label>{error&&<p role="alert" className="form-error">{error}</p>}<button disabled={busy} className="primary-btn">{busy?<LoaderCircle className="spin" size={16}/>:<LogIn size={16}/>} {setup?'Create owner access':'Verify and enter'}</button><div className="notice compact"><ShieldCheck size={17}/><p>Your code is checked by the backend and never sent to the AI. This prototype runs only on this computer.</p></div></form>;
+type AccessRole = 'owner' | 'member';
+
+export function SignIn({ ready }: { ready: (role: AccessRole) => Promise<void> }) {
+  const [role, setRole] = useState<AccessRole | null>(null);
+  const [status, setStatus] = useState<{ setupRequired: boolean; sessionRole?: AccessRole } | null>(null);
+  const [id, setId] = useState('');
+  const [name, setName] = useState('');
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const setup = role === 'owner' && status?.setupRequired;
+
+  async function choose(nextRole: AccessRole) {
+    setRole(nextRole);
+    setStatus(null);
+    setError('');
+    setBusy(true);
+    try { setStatus(await api('/auth/status')); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function enter(resume = false) {
+    if (!role) return;
+    setBusy(true);
+    setError('');
+    try {
+      if (!resume) {
+        const payload = setup ? { name, code } : { personId: role === 'owner' ? 'owner' : id.trim(), code, role };
+        await api(setup ? '/auth/setup' : '/session', { method: 'POST', body: JSON.stringify(payload) });
+      }
+      await ready(role);
+      setCode('');
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  if (!role) return <section className="signin-panel" aria-labelledby="access-heading">
+    <span className="access-symbol"><KeyRound size={25}/></span>
+    <h2 id="access-heading">Choose how to enter</h2>
+    <p>Open your business workspace or sign in to request a purchase.</p>
+    <div className="role-options">
+      <button className="secondary-btn role-option" type="button" onClick={() => void choose('owner')}>
+        <ShieldCheck size={22} aria-hidden="true"/><span><strong>Business owner</strong><small>Create a workspace or manage your team and wallet.</small></span><ChevronRight size={17} aria-hidden="true"/>
+      </button>
+      <button className="secondary-btn role-option" type="button" onClick={() => void choose('member')}>
+        <Users size={22} aria-hidden="true"/><span><strong>Team member</strong><small>Sign in with the ID and code your owner gave you.</small></span><ChevronRight size={17} aria-hidden="true"/>
+      </button>
+    </div>
+  </section>;
+
+  return <form className="signin-panel" onSubmit={e => { e.preventDefault(); void enter(); }}>
+    <button className="text-btn role-back" type="button" disabled={busy} onClick={() => { setRole(null); setCode(''); setError(''); }}><ArrowLeft size={16}/>Choose a role</button>
+    <h2>{setup ? 'Set up owner access' : role === 'owner' ? 'Sign in as business owner' : 'Sign in as team member'}</h2>
+    {!status && busy && <p role="status">Checking workspace access…</p>}
+    {role === 'member' && status?.setupRequired && <p>The business owner needs to set up the workspace and issue your member ID and private code first.</p>}
+    {status && (role === 'owner' || !status.setupRequired) && <>
+      {status.sessionRole === role && <button className="secondary-btn" type="button" disabled={busy} onClick={() => void enter(true)}>Continue existing session</button>}
+      <p>{setup ? 'Create a private owner code to set up this workspace.' : role === 'owner' ? 'Enter your private owner code.' : 'Use the ID and private code issued by your business owner.'}</p>
+      {setup ? <label>Your name<input autoComplete="name" required minLength={2} maxLength={80} value={name} onChange={e => setName(e.target.value)}/></label> :
+        role === 'member' ? <label>Member ID<input autoComplete="username" required value={id} onChange={e => setId(e.target.value)}/></label> :
+        <input type="hidden" autoComplete="username" value="owner"/>}
+      <label>Private access code<input type="password" autoComplete={setup ? 'new-password' : 'current-password'} required minLength={setup ? 8 : 1} maxLength={128} value={code} onChange={e => setCode(e.target.value)} placeholder={setup ? 'At least 8 characters' : 'Your private code'}/></label>
+      <button disabled={busy} className="primary-btn">{busy ? <LoaderCircle className="spin" size={16}/> : <LogIn size={16}/>} {setup ? 'Create owner access' : 'Sign in'}</button>
+    </>}
+    {error && <p role="alert" className="form-error">{error}</p>}
+  </form>;
 }
 
 export function TeamConsole({data,refresh,add,ask}:{data:any;refresh:()=>Promise<void>;add:()=>void;ask:(text:string)=>void}){

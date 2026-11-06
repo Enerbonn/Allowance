@@ -32,36 +32,106 @@ export function validateOwnerSetupSignature(signed:string,expectedHash:string,ow
 
 export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner:RequestHandler){
  const noir=new NoirAgentClient({network});let busy=false;
- function config(){
-  const project=localProject();
-  const saved=store.get<any>('testnet','config');
-  if(saved&&project.owner&&saved.owner!==project.owner)throw new Error('The configured wallet differs from this database’s Testnet owner. Use a separate local database for a different owner.');
-  return saved||{owner:project.owner,deviceHash:project.owner?createHash('sha256').update('allowance:'+project.owner).digest('hex'):'',asset,contracts:EVENT_CONTRACTS};
+ type Project = { owner: string; projectId: string };
+ type WalletConfig = { owner: string; deviceHash: string; asset: string; contracts: typeof EVENT_CONTRACTS; agent?: string; merchant?: string };
+ const legacy = () => store.get<WalletConfig>('testnet','config');
+ function project(): Project {
+  const selected = store.get<Project>('testnet','selection');
+  if (selected) return selected;
+  const previous = localProject();
+  const ownerAddress = legacy()?.owner || previous.owner;
+  return {owner:ownerAddress,projectId:ownerAddress===previous.owner?previous.projectId:''};
  }
- function gas(){const key=unprotect(resolve('.local/velo-gas.dpapi'));if(!/^tg_test_[a-f0-9]{32}$/.test(key))throw new Error('A Gas Station Testnet key is required.');return new Velo({apiKey:key,baseUrl:'https://www.velo-build.dev',environment:'testnet',timeoutMs:30000,maxRetries:0});}
- function safeStatus(){const c=config();const {projectId}=localProject();return {...c,gasStationUrl:projectId?`https://www.velo-build.dev/projects/${projectId}/gas`:'',initialized:!!c.agent,gasKeyStored:existsSync('.local/velo-gas.dpapi'),network:'Stellar Testnet',checks:store.get('testnet','checks')||null,operations:store.list<any>('chain-operations').map(({signedXdr,...v})=>v)};}
+ function config(): WalletConfig {
+  const {owner:address} = project();
+  const saved = store.get<WalletConfig>('testnet-wallet',address);
+  const previous = legacy();
+  return saved || (previous?.owner===address ? previous : {owner:address,deviceHash:address?createHash('sha256').update('allowance:'+address).digest('hex'):'',asset,contracts:EVENT_CONTRACTS});
+ }
+ function keyName(c: WalletConfig, role: string) {
+  return legacy()?.owner===c.owner ? `testnet-${role}` : `testnet-${role}-${c.deviceHash}`;
+ }
+ function gasPath(active: Project) {
+  const scope = createHash('sha256').update(`${active.owner}:${active.projectId}`).digest('hex');
+  return resolve('.local',`velo-gas-${scope}.dpapi`);
+ }
+ function availableGasPath(active: Project) {
+  if (!active.owner || !active.projectId) return null;
+  const scoped = gasPath(active);
+  if (existsSync(scoped)) return scoped;
+  const previous = localProject();
+  const original = resolve('.local/velo-gas.dpapi');
+  return active.owner===previous.owner && active.projectId===previous.projectId && existsSync(original) ? original : null;
+ }
+ function gas(){
+  const path = availableGasPath(project());
+  if(!path)throw new Error('Save the Testnet Gas key for this wallet and Velo project in Connections.');
+  const key=unprotect(path);
+  if(!/^tg_test_[a-f0-9]{32}$/.test(key))throw new Error('A Gas Station Testnet key is required.');
+  return new Velo({apiKey:key,baseUrl:'https://www.velo-build.dev',environment:'testnet',timeoutMs:30000,maxRetries:0});
+ }
+ function safeStatus(){
+  const c=config(),active=project();
+  return {...c,projectId:active.projectId,gasStationUrl:active.projectId?`https://www.velo-build.dev/projects/${active.projectId}/gas`:'',initialized:!!c.agent,gasKeyStored:!!availableGasPath(active),network:'Stellar Testnet',checks:store.get('testnet-checks',c.owner)||(legacy()?.owner===c.owner?store.get('testnet','checks'):null)||null,operations:store.list<any>('chain-operations').map(({signedXdr,...v})=>v)};
+ }
+ function assertIdle() {
+  if(busy)throw new Error('Wait for the current Testnet operation to finish.');
+ }
+ const exclusive = (handler: RequestHandler): RequestHandler => async (req,res,next) => {
+  assertIdle();
+  busy=true;
+  try { await handler(req,res,next); } finally { busy=false; }
+ };
  async function settleClaim(op:any,r:any,actor:string) {
   const c=config();
   const finish=()=>{op.state='claimed';store.put('chain-operations',r.id,op);r.status='paid';r.receipt=op.claimHash;store.saveRequest(r);store.db.prepare("UPDATE commitments SET state='paid' WHERE request_id=?").run(r.id);store.event('Testnet payment claimed',`Authorization ${op.result.transactionHash}; merchant claim ${op.claimHash}.`,actor,r.id,'chain');return op;};
   if(op.state==='claimed')return op;
   if(op.claimHash){const result=await noir.server.getTransaction(op.claimHash);if(result.status==='SUCCESS')return finish();op.state=result.status==='FAILED'?'claim_failed':'claim_confirmation_pending';store.put('chain-operations',r.id,op);return op;}
-  const merchant=getKey('testnet-merchant');const claimXdr=await noir.prepare(merchant.publicKey(),{kind:'claim',token:asset});const claimTx=TransactionBuilder.fromXDR(claimXdr,Networks.TESTNET);if(!('source' in claimTx)||claimTx.source!==c.merchant)throw new Error('Unexpected merchant transaction.');claimTx.sign(merchant);op.claimHash=claimTx.hash().toString('hex');op.state='claim_submitting';store.put('chain-operations',r.id,op);await noir.submit(claimTx.toXDR());return finish();
+  const merchant=getKey(keyName(c,'merchant'));const claimXdr=await noir.prepare(merchant.publicKey(),{kind:'claim',token:asset});const claimTx=TransactionBuilder.fromXDR(claimXdr,Networks.TESTNET);if(!('source' in claimTx)||claimTx.source!==c.merchant)throw new Error('Unexpected merchant transaction.');claimTx.sign(merchant);op.claimHash=claimTx.hash().toString('hex');op.state='claim_submitting';store.put('chain-operations',r.id,op);await noir.submit(claimTx.toXDR());return finish();
  }
  app.get('/api/testnet',auth,owner,(_req,res)=>res.json(safeStatus()));
- app.post('/api/testnet/initialize',auth,owner,async(_req,res)=>{
-  if(process.platform!=='win32')throw new Error('This local prototype uses Windows-protected development keys.');
-  const c=config();if(!c.owner)throw new Error('Add your owner public address and Velo project ID to .local/testnet-project.json first.');mkdirSync('.local',{recursive:true});
-  for(const role of ['agent','merchant']){const path=resolve('.local',`testnet-${role}.dpapi`);if(!existsSync(path))writeFileSync(path,protect(Keypair.random().secret()),{mode:0o600});c[role]=getKey(`testnet-${role}`).publicKey();}
-  store.put('testnet','config',c);
-  for(const role of ['agent','merchant']){const response=await fetch('https://friendbot.stellar.org/?addr='+encodeURIComponent(c[role]),{signal:AbortSignal.timeout(30000)});if(!response.ok&&response.status!==400)throw new Error('The Testnet faucet is unavailable. Public account details were saved; retry later.');}
-  store.event('Testnet demo accounts initialized','Dedicated local agent and demo merchant. No real funds.',res.locals.person.name,null,'system');res.json(safeStatus());
+ app.post('/api/testnet/wallet',auth,owner,(req,res)=>{
+  assertIdle();
+  const address=String(req.body.address||'').trim();
+  try { Keypair.fromPublicKey(address); } catch { return res.status(400).json({error:'Choose a valid Stellar account address.'}); }
+  const current=project();
+  const saved=store.get<Project>('testnet-project',address);
+  const original=localProject();
+  const prior=saved?.projectId ?? (address===original.owner?original.projectId:'');
+  const projectId=req.body.projectId===undefined ? prior : String(req.body.projectId).trim();
+  if(projectId&&!/^[a-zA-Z0-9_-]{1,100}$/.test(projectId))return res.status(400).json({error:'Enter a valid Velo project ID.'});
+  const changed=current.owner!==address||current.projectId!==projectId;
+  if(changed&&store.list<any>('chain-operations').some(op=>op.state!=='claimed'))return res.status(409).json({error:'Finish or reconcile the existing Testnet payment before switching wallets or projects.'});
+  const selection={owner:address,projectId};
+  store.put('testnet-project',address,selection);
+  store.put('testnet','selection',selection);
+  res.json(safeStatus());
  });
+ app.post('/api/testnet/gas-key',auth,owner,(req,res)=>{
+  assertIdle();
+  const active=project();
+  if(!active.owner||!active.projectId||req.body.address!==active.owner||req.body.projectId!==active.projectId)return res.status(409).json({error:'Reload the active wallet and Velo project before saving its Gas key.'});
+  if(process.platform!=='win32')throw new Error('Protected Testnet key storage is available on Windows.');
+  const key=String(req.body.key||'').trim();
+  if(!/^tg_test_[a-f0-9]{32}$/.test(key))return res.status(400).json({error:'Enter a scoped Velo Gas Station Testnet key.'});
+  mkdirSync('.local',{recursive:true});
+  writeFileSync(gasPath(active),protect(key),{mode:0o600});
+  res.json(safeStatus());
+ });
+ app.post('/api/testnet/initialize',auth,owner,exclusive(async(_req,res)=>{
+  if(process.platform!=='win32')throw new Error('This local prototype uses Windows-protected development keys.');
+  const c=config();if(!c.owner)throw new Error('Connect a Stellar Testnet owner wallet first.');mkdirSync('.local',{recursive:true});
+  for(const role of ['agent','merchant'] as const){const name=keyName(c,role);const path=resolve('.local',name+'.dpapi');if(!existsSync(path))writeFileSync(path,protect(Keypair.random().secret()),{mode:0o600});c[role]=getKey(name).publicKey();}
+  store.put('testnet-wallet',c.owner,c);
+  for(const role of ['agent','merchant'] as const){const response=await fetch('https://friendbot.stellar.org/?addr='+encodeURIComponent(c[role]!),{signal:AbortSignal.timeout(30000)});if(!response.ok&&response.status!==400)throw new Error('The Testnet faucet is unavailable. Public account details were saved; retry later.');}
+  store.event('Testnet demo accounts initialized','Dedicated local agent and demo merchant. No real funds.',res.locals.person.name,null,'system');res.json(safeStatus());
+ }));
  app.post('/api/testnet/inspect',auth,owner,async(_req,res)=>{
   const c=config();const contracts=[];for(const [name,address] of Object.entries(EVENT_CONTRACTS)){try{await noir.server.getContractData(address,xdr.ScVal.scvLedgerKeyContractInstance());contracts.push({name,address,exists:true});}catch{contracts.push({name,address,exists:false});}}
   let chain:any={};if(c.deviceHash)try{chain={deviceOwner:await noir.getDeviceOwner(c.deviceHash),escrow:String(await noir.getEscrowBalance(c.deviceHash)),policy:await noir.getPolicy(c.deviceHash)};if(chain.policy){chain.policy={...chain.policy,maxAmount:String(chain.policy.maxAmount),expiresAt:chain.policy.expiresAt?.toISOString()||null};}}catch{chain.error='Could not read the current Noir contract state. Deployment may be missing, archived, or incompatible.';}
-  const checks={contracts,...chain,checkedAt:new Date().toISOString()};store.put('testnet','checks',checks);res.json(checks);
+  const checks={contracts,...chain,checkedAt:new Date().toISOString()};store.put('testnet-checks',c.owner,checks);res.json(checks);
  });
- app.post('/api/testnet/bind-supplier',auth,owner,(req,res)=>{const c=config();if(!c.merchant)throw new Error('Initialize demo accounts first.');const supplier=store.get<Supplier>('suppliers',String(req.body.supplierId));if(!supplier?.approved)throw new Error('Choose an approved supplier.');supplier.destination=c.merchant;store.put('suppliers',supplier.id,supplier);store.event('Demo merchant bound',`${supplier.name} points to the dedicated Testnet demo merchant, not a real shop.`,res.locals.person.name,null,'policy');res.json({ok:true});});
+ app.post('/api/testnet/bind-supplier',auth,owner,(req,res)=>{const c=config();if(!c.merchant)throw new Error('Initialize demo accounts first.');const supplier=store.get<Supplier>('suppliers',String(req.body.supplierId));if(!supplier?.approved)throw new Error('Choose an approved supplier.');store.put('testnet-supplier',c.owner+':'+supplier.id,{merchant:c.merchant});store.event('Demo merchant bound',`${supplier.name} points to the dedicated Testnet demo merchant, not a real shop.`,res.locals.person.name,null,'policy');res.json({ok:true});});
  app.post('/api/testnet/prepare',auth,owner,async(req,res)=>{
   const c=config();if(!c.agent)throw new Error('Initialize Testnet demo accounts first.');
   const kind=String(req.body.kind);let op:NoirOperation;
@@ -71,19 +141,20 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   else throw new Error('Unsupported setup operation.');
   const unsignedXdr=await noir.prepare(c.owner,op);const tx=TransactionBuilder.fromXDR(unsignedXdr,Networks.TESTNET);const id=randomUUID();store.put('wallet-pending',id,{id,hash:tx.hash().toString('hex'),kind,createdAt:Date.now(),state:'pending'});res.json({id,unsignedXdr,owner:c.owner,networkPassphrase:Networks.TESTNET,kind});
  });
- app.post('/api/testnet/submit-setup',auth,owner,async(req,res)=>{
+ app.post('/api/testnet/submit-setup',auth,owner,exclusive(async(req,res)=>{
   const c=config(),pending=store.get<any>('wallet-pending',String(req.body.id));if(!pending||pending.state!=='pending'||Date.now()-pending.createdAt>300000)throw new Error('Prepare a fresh wallet transaction.');
   const signed=String(req.body.signedXdr||'');validateOwnerSetupSignature(signed,pending.hash,c.owner);
   pending.state='submitting';store.put('wallet-pending',pending.id,pending);const hash=await noir.submit(signed);pending.state='confirmed';pending.hash=hash;store.put('wallet-pending',pending.id,pending);store.event('Testnet setup confirmed',`${pending.kind}: ${hash}`,res.locals.person.name,null,'chain');res.json({hash});
- });
+ }));
  app.post('/api/requests/:id/testnet',auth,owner,async(req,res)=>{
   if(busy)return res.status(409).json({error:'Another chain operation is running. Wait, then reconcile its status.'});busy=true;
   try{
-   const id=String(req.params.id),r=store.request(id);if(!r||r.mode!=='testnet')throw new Error('Choose a Testnet purchase request.');const c=config();const supplier=store.get<Supplier>('suppliers',r.supplierId);if(!c.agent||supplier?.destination!==c.merchant)throw new Error('Bind an approved supplier to the demo merchant first.');
-   const existing=store.get<any>('chain-operations',id);const velo=gas();
-   if(existing){if(existing.state==='claimed')return res.json(existing);if(!existing.identity)throw new Error('An earlier operation requires manual reconciliation; no duplicate submission was made.');const result=await velo.gas.getStatus(existing.identity);existing.result=result;existing.state=result.status;store.put('chain-operations',id,existing);return res.json(result.status==='succeeded'?await settleClaim(existing,r,res.locals.person.name):existing);}
+   const id=String(req.params.id),r=store.request(id);if(!r||r.mode!=='testnet')throw new Error('Choose a Testnet purchase request.');const existing=store.get<any>('chain-operations',id);if(existing?.state==='claimed')return res.json(existing);
+   const c=config();const supplier=store.get<Supplier>('suppliers',r.supplierId);const binding=supplier&&store.get<{merchant:string}>('testnet-supplier',c.owner+':'+supplier.id);if(!c.agent||!c.merchant||!supplier?.approved||(binding?.merchant||supplier.destination)!==c.merchant)throw new Error('Bind an approved supplier to the demo merchant first.');
+   const velo=gas();
+   if(existing){if(!existing.identity)throw new Error('An earlier operation requires manual reconciliation; no duplicate submission was made.');const result=await velo.gas.getStatus(existing.identity);existing.result=result;existing.state=result.status;store.put('chain-operations',id,existing);return res.json(result.status==='succeeded'?await settleClaim(existing,r,res.locals.person.name):existing);}
    if(!String(req.body.note||'').trim())throw new Error('Add an owner decision note.');const failed=store.checks(r).filter(v=>!v.pass);if(failed.length)throw new Error(failed.map(v=>v.detail).join(' '));if(!['needs_review','blocked'].includes(r.status))throw new Error('Request is not available for payment.');
-   const agent=getKey('testnet-agent');const check=await noir.checkPayment({deviceHash:c.deviceHash,agent:agent.publicKey(),asset,amount:BigInt(r.amount)});if(!check.ok)throw new Error(`Noir refused payment: ${check.reason}`);
+   const agent=getKey(keyName(c,'agent'));const check=await noir.checkPayment({deviceHash:c.deviceHash,agent:agent.publicKey(),asset,amount:BigInt(r.amount)});if(!check.ok)throw new Error(`Noir refused payment: ${check.reason}`);
    const nonce=BigInt(Math.max(Date.now(),Number(store.setting('chain-nonce')||0)+1));const op:any={id,nonce:String(nonce),state:'reserved',createdAt:new Date().toISOString()};
    store.db.exec('BEGIN IMMEDIATE');try{const again=store.checks(r).filter(v=>!v.pass);if(again.length)throw new Error('Budget or access changed.');store.setSetting('chain-nonce',String(nonce));store.db.prepare("INSERT INTO commitments VALUES(?,?,?,'reserved')").run(r.id,r.projectId,r.amount);r.status='authorized';r.comment=String(req.body.note).slice(0,1500);store.saveRequest(r);store.put('chain-operations',id,op);store.db.exec('COMMIT');}catch(e){store.db.exec('ROLLBACK');throw e;}
    try{
