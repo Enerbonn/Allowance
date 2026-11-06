@@ -9,7 +9,7 @@ import express from 'express';
 
 test('private codes, owner-reviewed AI proposals, and member memory stay scoped',async()=>{
  const store=new Store(':memory:');let payload:any;let answer:any={scope:'workspace',reply:'An owner update.',draft:null,proposals:[],model:'test-model'};
- const mock=express();mock.use(express.json());mock.post('/',(req,res)=>{payload=req.body;res.json(answer);});const upstream=mock.listen(0,'127.0.0.1');await new Promise<void>(r=>upstream.on('listening',r));
+ const mock=express();mock.use(express.json());mock.post('/',(req,res)=>{payload=req.body;res.json(typeof answer === 'function' ? answer(payload) : answer);});const upstream=mock.listen(0,'127.0.0.1');await new Promise<void>(r=>upstream.on('listening',r));
  const app=createApp(store,{aiEndpoint:`http://127.0.0.1:${(upstream.address() as AddressInfo).port}/`,aiToken:'synthetic-test-token'}).listen(0,'127.0.0.1');await new Promise<void>(r=>app.on('listening',r));const base=`http://127.0.0.1:${(app.address() as AddressInfo).port}/api`;
  const headers={'content-type':'application/json','x-allowance-client':'local-prototype'};const post=(path:string,body:any,cookie='')=>fetch(base+path,{method:'POST',headers:{...headers,cookie},body:JSON.stringify(body)});
  try{
@@ -62,6 +62,31 @@ test('private codes, owner-reviewed AI proposals, and member memory stay scoped'
     assert.deepEqual(reply.proposals,[]);
   }
   assert.deepEqual(store.requests(),recordsBefore);
+  answer = (input: any) => ({
+    scope:'workspace', reply:'I drafted the request.', proposals:[],
+    draft: input.agentInstructions.includes('previous answer omitted') ?
+      {...draft, supplierId:null, supplierName:'Fictional Assets', evidenceUrl:null, amount:5} : null,
+  });
+  const recovered = await ask('Use Fictional Assets for 5 XLM and skip the link.');
+  assert.equal(recovered.draft.amount,'5');
+  assert.equal(recovered.draft.evidenceUrl,'');
+  assert.equal(recovered.draft.supplierId,'');
+  assert.equal(recovered.draft.supplierName,'Fictional Assets');
+  assert.match(recovered.text,/Preview/);
+  assert.deepEqual(store.requests(),recordsBefore);
+  const requestInput = {...recovered.draft,idempotencyKey:recovered.id};
+  const response = await post('/requests',requestInput,member);
+  assert.equal(response.status,202);
+  const saved = await response.json();
+  assert.equal(saved.request.supplierName,'Fictional Assets');
+  const duplicate = await post('/requests',requestInput,member);
+  assert.equal(duplicate.status,200);
+  assert.equal((await duplicate.json()).request.id,saved.request.id);
+  answer = {scope:'workspace',reply:'I submitted the request.',draft:null,proposals:[]};
+  const missing = await ask('Can you make a purchase draft?');
+  assert.equal(missing.draft,null);
+  assert.equal(missing.draftUnavailable,true);
+  assert.match(missing.text,/open the request form/);
   answer = {scope:'workspace',reply:'I cannot verify the payment.',draft:null,proposals:[note]};
   assert.deepEqual((await ask('Our supplier says the invoice was paid. Can you verify it?')).proposals,[]);
   answer={scope:'workspace',reply:'Save this private preference?',draft:null,proposals:[{type:'memory',targetId:'maya',summary:'Remember a work preference.',fields:{text:'Prefer accessible commercial font licenses.'}}]};const memory=await(await post('/assistant',{message:'Remember my work preference.'},member)).json();assert.equal((await post(`/proposals/${memory.proposals[0].id}/apply`,{},member)).status,200);assert.equal((await(await fetch(base+'/memory',{headers:{cookie:owner}})).json()).length,0);

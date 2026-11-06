@@ -14,8 +14,8 @@ export function manilaWeek(now = new Date()) {
 }
 
 const starterAgreement = [
-  'Buy resources only for assigned, active work and use owner-approved suppliers.',
-  'Include a quote or purchase link, the total price, and how the purchase helps deliver the task.',
+  'Buy resources only for assigned, active work. Use an approved or recognized supplier for routine purchases.',
+  'Include the total price and how the purchase helps deliver the task. Add a quote or purchase link if available.',
   'Keep purchases within member, request, and project limits. Do not split a purchase to get around a limit.',
   'Personal expenses, account sharing, and unlicensed materials are prohibited. Ask the owner about exceptions or uncertain requests.',
 ].join('\n');
@@ -93,7 +93,32 @@ export class Store {
       AND json_extract(r.data,'$.committedAt')>=? AND json_extract(r.data,'$.committedAt')<?`).get(excluding, personId, start, end) as {total:number};
     return row.total;
   }
-  checks(r: SpendRequest) { const p = this.get<Person>('people', r.requesterId)!; const weekly = p.weeklyBudget === undefined ? undefined : Math.max(0, p.weeklyBudget-this.weeklySpent(p.id,r.id)); return [...policyChecks(r, p, this.get<Task>('tasks', r.taskId), this.get<Supplier>('suppliers', r.supplierId), this.get<Project>('projects', r.projectId), this.policy(), this.committed(r.projectId, r.id)), {label:'Member allowance',pass:p.budget === undefined || this.memberSpent(p.id,r.id)+r.amount<=p.budget,detail:p.budget === undefined ? 'Workspace limits apply.' : `${money(Math.max(0,p.budget-this.memberSpent(p.id,r.id)))} XLM of this member’s total allowance remains.`}, {label:'Member weekly cap',pass:weekly === undefined || r.amount <= weekly,detail:weekly === undefined ? 'No separate weekly cap.' : `${money(weekly)} XLM remains under the member’s weekly cap (Manila time).`}, {label:'Member purchasing categories',pass:!p.allowedCategories || p.allowedCategories.includes(r.category),detail:'The member’s permitted categories also apply.'}]; }
+  supplierTrust(r: Pick<SpendRequest, 'supplierId' | 'category' | 'evidenceUrl'>) {
+    const supplier = this.get<Supplier>('suppliers', r.supplierId);
+    const url = URL.canParse(r.evidenceUrl) ? new URL(r.evidenceUrl) : null;
+    const host = url?.hostname.toLowerCase().replace(/\.$/, '') || '';
+    if (r.supplierId) {
+      if (!supplier?.approved || supplier.category !== r.category) return 'owner-review';
+      if (!r.evidenceUrl) return 'approved';
+      return this.quoteMatchesSupplier(r) ? 'approved' : 'owner-review';
+    }
+    // Match official HTTPS hosts exactly. Member text never supplies a payment destination.
+    if (r.category === 'Creative assets' && url?.protocol === 'https:' && !url.username && !url.password && !url.port &&
+        ['stock.adobe.com', 'elements.envato.com', 'motionarray.com', 'www.motionarray.com'].includes(host)) {
+      const listed = this.suppliers().filter(s => [s.domain, ...(s.quoteHosts || [])].some(value => value.toLowerCase().replace(/\.$/, '').replace(/^www\./, '') === host.replace(/^www\./, '')));
+      if (listed.some(s => !s.approved || s.category !== r.category)) return 'owner-review';
+      return 'recognized';
+    }
+    return 'owner-review';
+  }
+  private supplierCategoryChecks(r: SpendRequest) {
+    const supplier = this.get<Supplier>('suppliers', r.supplierId);
+    return supplier?.approved ? [{
+      label: 'Supplier category', pass: supplier.category === r.category,
+      detail: 'Choose a purchase category that matches the selected supplier.',
+    }] : [];
+  }
+  checks(r: SpendRequest) { const p = this.get<Person>('people', r.requesterId)!; const weekly = p.weeklyBudget === undefined ? undefined : Math.max(0, p.weeklyBudget-this.weeklySpent(p.id,r.id)); return [...policyChecks(r, p, this.get<Task>('tasks', r.taskId), this.get<Project>('projects', r.projectId), this.policy(), this.committed(r.projectId, r.id)), ...this.supplierCategoryChecks(r), {label:'Member allowance',pass:p.budget === undefined || this.memberSpent(p.id,r.id)+r.amount<=p.budget,detail:p.budget === undefined ? 'Workspace limits apply.' : `${money(Math.max(0,p.budget-this.memberSpent(p.id,r.id)))} XLM of this member’s total allowance remains.`}, {label:'Member weekly cap',pass:weekly === undefined || r.amount <= weekly,detail:weekly === undefined ? 'No separate weekly cap.' : `${money(weekly)} XLM remains under the member’s weekly cap (Manila time).`}, {label:'Member purchasing categories',pass:!p.allowedCategories || p.allowedCategories.includes(r.category),detail:'The member’s permitted categories also apply.'}]; }
   create(r: SpendRequest) {
     const prior = this.db.prepare('SELECT data FROM requests WHERE idempotency=?').get(r.idempotencyKey) as { data: string } | undefined;
     if (prior) { const old = JSON.parse(prior.data) as SpendRequest; if (old.requesterId !== r.requesterId) throw new Error('Request key belongs to another member.'); return { request: old, duplicate: true }; }
@@ -113,13 +138,16 @@ export class Store {
     if (r.status !== 'needs_review' || !this.reviewIsCurrent(r) || !this.trustedAssessment(r) ||
         r.ai?.recommendation !== 'approve' || this.checks(r).some(check => !check.pass)) return false;
     if (r.mode !== 'testnet' || r.amount > policy.autoLimit || !policy.autoTestnet) return false;
-    return !policy.requireEvidence || this.quoteMatchesSupplier(r);
+    return this.supplierTrust(r) !== 'owner-review' &&
+      (!policy.requireEvidence || !!r.evidenceUrl);
   }
-  quoteMatchesSupplier(r: SpendRequest) {
+  quoteMatchesSupplier(r: Pick<SpendRequest, 'supplierId' | 'evidenceUrl'>) {
     const supplier = this.get<Supplier>('suppliers', r.supplierId);
     const normalize = (host:string) => host.toLowerCase().replace(/\.$/, '');
     const quoteHost = URL.canParse(r.evidenceUrl) ? normalize(new URL(r.evidenceUrl).hostname) : '';
-    if(!supplier?.approved || !quoteHost) return false;
+    if (!supplier?.approved || !quoteHost) return false;
+    const url = new URL(r.evidenceUrl);
+    if (url.protocol !== 'https:' || url.username || url.password || url.port) return false;
     const primary = normalize(supplier.domain);
     return quoteHost===primary || quoteHost.endsWith('.'+primary) ||
       (supplier.quoteHosts || []).some(host=>normalize(host)===quoteHost);
@@ -128,16 +156,20 @@ export class Store {
     const r = this.request(id)!;
     if (r.status !== 'analyzing') return r;
     r.ai = ai;
-    r.reasons = this.checks(r).filter(check => !check.pass).map(check => check.detail);
-    r.status = r.reasons.length ? 'blocked' : 'needs_review';
-    if (r.status === 'needs_review') {
-      if (!this.reviewIsCurrent(r)) {
-        r.reasons.push('Policy changed during the assessment. Review the request under the current rules.');
-      } else if (this.trustedAssessment(r) && ai.recommendation === 'decline') {
-        r.status = 'declined';
-        r.reasons.push(ai.summary);
-      } else if (this.policy().requireEvidence && !this.quoteMatchesSupplier(r)) {
-        r.reasons.push('Automatic approval needs a quote link on the selected supplier’s approved website. Use a matching link, or ask the owner to approve the quote website.');
+    const failed = this.checks(r).filter(check => !check.pass);
+    r.reasons = failed.map(check => check.detail);
+    r.status = failed.some(check => check.label !== 'Supporting evidence') ? 'blocked' : 'needs_review';
+    if (!this.reviewIsCurrent(r)) {
+      r.reasons.push('Policy changed during the assessment. Review the request under the current rules.');
+    } else if (this.trustedAssessment(r) && ai.recommendation === 'decline') {
+      r.status = 'declined';
+      r.reasons.push(ai.summary);
+    } else if (r.status === 'needs_review') {
+      if (this.supplierTrust(r) === 'owner-review') {
+        r.reasons.push('This supplier or website needs owner review for this request.');
+      }
+      if (this.policy().requireEvidence && !r.evidenceUrl && r.evidenceId) {
+        r.reasons.push('The owner needs to check the attached evidence.');
       }
     }
     this.saveRequest(r);
@@ -157,7 +189,7 @@ export class Store {
       this.db.prepare("INSERT INTO commitments VALUES(?,?,?,'paid') ON CONFLICT(request_id) DO NOTHING").run(r.id, r.projectId, r.amount);
       r.committedAt = new Date().toISOString(); r.status = 'paid'; r.mode = 'simulated'; r.receipt = `SIM-${randomUUID().slice(0, 8).toUpperCase()}`; r.reasons = [];
       this.saveRequest(r);
-      this.event('Simulated payment completed', `${money(r.amount)} XLM allocated to ${this.get<Supplier>('suppliers', r.supplierId)!.name}. No blockchain transaction occurred.`, actor, r.id, 'payment');
+      this.event('Simulated payment completed', `${money(r.amount)} XLM allocated to ${this.get<Supplier>('suppliers', r.supplierId)?.name || r.supplierName || 'the supplier'}. No blockchain transaction occurred.`, actor, r.id, 'payment');
       this.db.exec('COMMIT'); return r;
     } catch (e) { this.db.exec('ROLLBACK'); throw e; }
   }
@@ -170,7 +202,7 @@ export class Store {
     this.put('policy', 'main', {
       id: 'main', version: 1, perRequest: 100 * SCALE, autoLimit: 40 * SCALE, projectLimit: 500 * SCALE,
       allowedCategories: ['Software', 'Creative assets', 'Research', 'Services'],
-      requireEvidence: true, autoPay: false, autoTestnet: false, paused: false, description: starterAgreement,
+      requireEvidence: false, autoPay: false, autoTestnet: false, paused: false, description: starterAgreement,
     } satisfies Policy);
     this.setSetting('workspace-kind', 'blank');
   }

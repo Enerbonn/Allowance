@@ -124,6 +124,44 @@ test('supplier category and quote host constrain automatic payments', () => {
   store.close();
 });
 
+test('unlisted supplier trust and missing references never bypass owner policy', () => {
+  const store = new Store(':memory:');
+  try {
+    const approved = {recommendation:'approve' as const, summary:'Useful to the assignment.', reasoning:[], missingInformation:[], provider:'Google Gemini'};
+    store.put('policy','main',{...store.policy(),requireEvidence:false,autoTestnet:true});
+    const request = {...candidate(store,'5'), mode:'testnet' as const, ai:approved};
+    assert.equal(store.canAutoApprove({...request,evidenceUrl:''}),true);
+    for (const [evidenceUrl, auto] of [
+      ['https://stock.adobe.com/video/example',true],
+      ['https://www.motionarray.com/browse/',true],
+      ['https://elements.envato.com.evil.example/item',false],
+      ['https://stock.adobe.com@unknown.example/item',false],
+      ['https://stock.adobe.com:8443/item',false],
+      ['https://assetsvids.example/clip',false],
+      ['',false],
+    ] as const) {
+      assert.equal(store.canAutoApprove({...request,supplierId:'',evidenceUrl}),auto,evidenceUrl);
+    }
+    assert.equal(store.canAutoApprove({...request,evidenceUrl:'https://stock.adobe.com/item'}),false);
+    const unknown = {...request,supplierId:'',evidenceUrl:'',status:'analyzing' as const};
+    store.create(unknown);
+    const reviewed = store.setReview(unknown.id,approved);
+    assert.equal(reviewed.status,'needs_review');
+    assert.match(reviewed.reasons.join(' '),/needs owner review/);
+    assert.ok(store.checks(reviewed).every(check=>check.pass));
+    const unrelated = {...candidate(store,'5'),supplierId:'',category:'Equipment',status:'analyzing' as const};
+    store.create(unrelated);
+    const declined = store.setReview(unrelated.id,{...approved,recommendation:'decline',summary:'A car does not support the assigned editing work.'});
+    assert.equal(declined.status,'declined');
+    assert.match(declined.reasons.join(' '),/does not support/);
+    store.put('policy','main',{...store.policy(),requireEvidence:true});
+    assert.equal(store.canAutoApprove({...request,evidenceUrl:''}),false);
+    assert.ok(store.checks({...request,evidenceUrl:''}).some(check=>check.label==='Supporting evidence'&&!check.pass));
+  } finally {
+    store.close();
+  }
+});
+
 test('weekly cap counts reservations and payments and resets at Manila midnight', () => {
   const s = new Store(':memory:');
   try {

@@ -13,9 +13,12 @@ export function units(value: string): number {
 }
 export const categories = ['Software', 'Creative assets', 'Research', 'Services', 'Equipment'] as const;
 export const requestSchema = z.object({
-  title: z.string().trim().min(5).max(120), taskId: z.string().min(1), supplierId: z.string().min(1),
+  title: z.string().trim().min(5).max(120), taskId: z.string().min(1), supplierId: z.string().max(100).default(''), supplierName: z.string().trim().max(120).optional(),
   category: z.enum(categories), amount: z.string(), purpose: z.string().trim().min(15).max(3000),
-  evidenceUrl: z.union([z.literal(''), z.url().refine(v => new URL(v).protocol === 'https:', 'Use an HTTPS link.')]).default(''),
+  evidenceUrl: z.union([z.literal(''), z.url().refine(v => {
+    const url = new URL(v);
+    return url.protocol === 'https:' && !url.username && !url.password;
+  }, 'Use an HTTPS link without embedded credentials.')]).default(''),
   evidenceId: z.string().max(80).optional(),
   mode: z.literal('testnet').default('testnet'),
   idempotencyKey: z.string().min(12).max(100),
@@ -31,22 +34,20 @@ export type Project = { id: string; name: string; description: string; budget: n
 export type Task = { id: string; projectId: string; assigneeId: string; title: string; description: string; active: boolean };
 export type Supplier = { id: string; name: string; category: string; domain: string; quoteHosts?: string[]; approved: boolean; destination: string };
 export type Review = { recommendation: 'approve' | 'review' | 'decline'; summary: string; reasoning: string[]; missingInformation: string[]; model?: string; provider: string };
-export type SpendRequest = { id: string; title: string; taskId: string; projectId: string; requesterId: string; supplierId: string; category: string; amount: number; purpose: string; evidenceUrl: string; status: 'analyzing' | 'needs_review' | 'blocked' | 'authorized' | 'paid' | 'payment_failed' | 'declined' | 'cancelled'; createdAt: string; updatedAt: string; policyVersion: number; reasons: string[]; ai: Review | null; mode: 'simulated' | 'testnet'; receipt: string | null; idempotencyKey: string; comment: string; evidenceId?: string; profileVersion?: number; committedAt?: string; };
+export type SpendRequest = { id: string; title: string; taskId: string; projectId: string; requesterId: string; supplierId: string; supplierName?: string; category: string; amount: number; purpose: string; evidenceUrl: string; status: 'analyzing' | 'needs_review' | 'blocked' | 'authorized' | 'paid' | 'payment_failed' | 'declined' | 'cancelled'; createdAt: string; updatedAt: string; policyVersion: number; reasons: string[]; ai: Review | null; mode: 'simulated' | 'testnet'; receipt: string | null; idempotencyKey: string; comment: string; evidenceId?: string; profileVersion?: number; committedAt?: string; };
 export type Event = { id: string; requestId: string | null; actor: string; title: string; detail: string; createdAt: string; kind: string };
 export type Check = { label: string; pass: boolean; detail: string };
 
-export function policyChecks(request: SpendRequest, person: Person, task: Task | undefined, supplier: Supplier | undefined, project: Project | undefined, policy: Policy, committed: number): Check[] {
+export function policyChecks(request: SpendRequest, person: Person, task: Task | undefined, project: Project | undefined, policy: Policy, committed: number): Check[] {
   return [
     { label: 'Team membership', pass: person.active, detail: person.active ? `${person.name} is an active team member.` : 'This member is inactive.' },
     { label: 'Task assignment', pass: !!task?.active && task.assigneeId === person.id && task.projectId === request.projectId, detail: task?.assigneeId === person.id ? `Assigned to ${task.title}.` : 'The task must be assigned to the requester.' },
     { label: 'Active project', pass: !!project?.active, detail: project?.active ? project.name : 'The project is inactive.' },
     { label: 'Spending enabled', pass: !policy.paused, detail: policy.paused ? 'The owner paused spending.' : 'The owner has enabled spending.' },
-    { label: 'Approved supplier', pass: !!supplier?.approved, detail: supplier?.approved ? `${supplier.name} is approved for the demo.` : 'This supplier needs owner verification.' },
-    { label: 'Supplier category', pass: supplier?.category === request.category, detail: 'The purchase category must match the approved supplier.' },
     { label: 'Allowed expense', pass: policy.allowedCategories.includes(request.category), detail: policy.allowedCategories.includes(request.category) ? `${request.category} is permitted.` : `${request.category} is outside the approved policy.` },
     { label: 'Per-request limit', pass: request.amount <= policy.perRequest, detail: `${money(request.amount)} of ${money(policy.perRequest)} XLM allowed.` },
     { label: 'Project allowance', pass: !!project && committed + request.amount <= Math.min(project.budget, policy.projectLimit), detail: project ? `${money(Math.max(0, Math.min(project.budget, policy.projectLimit) - committed))} XLM available before this request.` : 'Project missing.' },
-    { label: 'Supporting evidence', pass: !policy.requireEvidence || !!(request.evidenceUrl || request.evidenceId), detail: (request.evidenceUrl || request.evidenceId) ? 'Supporting evidence was supplied. Authenticity still needs verification.' : policy.requireEvidence ? 'Add a quote or purchase reference.' : 'A reference link is optional.' },
+    { label: 'Supporting evidence', pass: !policy.requireEvidence || !!(request.evidenceUrl || request.evidenceId), detail: (request.evidenceUrl || request.evidenceId) ? 'Supporting evidence was supplied. Authenticity still needs verification.' : policy.requireEvidence ? 'Your workspace requires a quote, purchase link, or attachment before payment.' : 'A reference link is optional.' },
   ];
 }
 

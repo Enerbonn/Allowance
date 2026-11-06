@@ -75,16 +75,12 @@ export function createApp(store: Store, options: AppOptions = {}, dispatch?: exp
     aiState = { ...aiState, connected: false, lastChecked: new Date().toISOString(), model: null, message: ai.errorMessage(error) };
   };
   async function review(r: SpendRequest) {
-    if (store.checks(r).some(check => !check.pass)) {
-      store.setReview(r.id, { ...offlineReview(), summary: 'This request is blocked by the current spending rules.' });
-      return;
-    }
     try {
       if (requestsOverride(r.title + ' ' + r.purpose)) {
         store.setReview(r.id, { ...offlineReview(), summary: 'This request asks to bypass the spending rules. The owner must review it.' });
         return;
       }
-      const raw = await ai.call({ agentInstructions: reviewInstructions, checks: store.checks(r), request: { title: r.title, purpose: r.purpose, amount: money(r.amount), currency: 'XLM', category: r.category, requester: assistantMember(store, store.get<Person>('people',r.requesterId)!), evidenceSupplied: !!(r.evidenceUrl || r.evidenceId), quoteReferenceMatchesApprovedSupplier: store.quoteMatchesSupplier(r), attachment: r.evidenceId ? 'File retained for human review; contents not inspected by the AI.' : null }, task: store.get('tasks', r.taskId), supplier: store.suppliers().find(s => s.id === r.supplierId), policy: { description: store.policy().description, requireEvidence: store.policy().requireEvidence, perRequest: money(store.policy().perRequest), autoLimit: money(store.policy().autoLimit) } });
+      const raw = await ai.call({ agentInstructions: reviewInstructions, checks: store.checks(r), request: { title: r.title, purpose: r.purpose, amount: money(r.amount), currency: 'XLM', category: r.category, requester: assistantMember(store, store.get<Person>('people',r.requesterId)!), evidenceSupplied: !!(r.evidenceUrl || r.evidenceId), supplierTrust: store.supplierTrust(r), attachment: r.evidenceId ? 'File retained for human review; contents not inspected by the AI.' : null }, task: store.get('tasks', r.taskId), supplier: {name: store.get<Supplier>('suppliers', r.supplierId)?.name || r.supplierName || 'Not provided', referenceHost: r.evidenceUrl ? new URL(r.evidenceUrl).hostname : null}, policy: { description: store.policy().description, requireEvidence: store.policy().requireEvidence, perRequest: money(store.policy().perRequest), autoLimit: money(store.policy().autoLimit) } });
       const result = validateReview(raw, ai.provider ?? undefined);
       aiConnected(result.model);
       const reviewed = store.setReview(r.id, { ...result, summary: redact(result.summary), reasoning: result.reasoning.map(redact), missingInformation: result.missingInformation.map(redact) });
@@ -156,8 +152,10 @@ export function createApp(store: Store, options: AppOptions = {}, dispatch?: exp
     const input = requestSchema.parse(req.body); const p = res.locals.person as Person;
     const task = store.get<Task>('tasks', input.taskId); if (!task || task.assigneeId !== p.id) return res.status(403).json({ error: 'Choose a task assigned to your member account.' });
     if (input.evidenceId && store.get<any>('evidence', input.evidenceId)?.personId !== p.id) return res.status(400).json({ error: 'Attach evidence uploaded by your own identity.' });
+    if (input.supplierId && !store.get<Supplier>('suppliers', input.supplierId)) return res.status(400).json({ error: 'Choose a listed supplier or enter another supplier.' });
+    const supplierName = redact(input.supplierName || '') || (input.evidenceUrl ? new URL(input.evidenceUrl).hostname : undefined);
     const now = new Date().toISOString();
-    const r: SpendRequest = { ...input, title: redact(input.title), purpose: redact(input.purpose), id: `REQ-${randomUUID().slice(0, 8).toUpperCase()}`, projectId: task.projectId, requesterId: p.id, amount: units(input.amount), status: 'analyzing', createdAt: now, updatedAt: now, policyVersion: store.policy().version, profileVersion:p.profileVersion||0, reasons: [], ai: null, mode: input.mode, receipt: null, comment: '' };
+    const r: SpendRequest = { ...input, supplierName, title: redact(input.title), purpose: redact(input.purpose), id: `REQ-${randomUUID().slice(0, 8).toUpperCase()}`, projectId: task.projectId, requesterId: p.id, amount: units(input.amount), status: 'analyzing', createdAt: now, updatedAt: now, policyVersion: store.policy().version, profileVersion:p.profileVersion||0, reasons: [], ai: null, mode: input.mode, receipt: null, comment: '' };
     const created = store.create(r); if (!created.duplicate) startReview(r);
     res.status(created.duplicate ? 200 : 202).json(created);
   });

@@ -8,7 +8,7 @@ import { redact, requestsOverride, sanitize } from './assistant-safety.ts';
 import { createSetupRecord, memberBudget, memberProfileFields, setupSchemas } from './setup.ts';
 import { agentSettingsSchema, parseAgentSettings, type installTestnet } from './testnet.ts';
 import { Store, manilaWeek } from './store.ts';
-import { categories, emailSchema, units, money, type Person } from './domain.ts';
+import { categories, emailSchema, requestSchema, units, money, type Person } from './domain.ts';
 
 const instructions = readFileSync(new URL('./agent-instructions.md', import.meta.url), 'utf8');
 const profileFields = memberProfileFields.partial();
@@ -23,7 +23,8 @@ const proposalFields = {
 const policyFields = z.object({requireEvidence:z.boolean().optional(),description:z.string().max(4000).optional(),perRequest:z.string().optional(),autoLimit:z.string().optional(),projectLimit:z.string().optional(),allowedCategories:z.array(z.enum(categories)).min(1).optional()}).strict();
 const memoryFields = z.object({text:z.string().trim().min(3).max(2000)}).strict();
 const proposalSchema = z.object({type:z.enum(['profile','policy','memory','member','project','task','supplier','agent']),targetId:z.string().max(100),summary:z.string().max(1000),fields:z.record(z.string(),z.unknown())});
-const draftSchema = z.object({title:z.string().max(120),taskId:z.string(),supplierId:z.string(),category:z.enum(categories),amount:z.string().max(30),purpose:z.string().max(3000),evidenceUrl:z.string().max(2000).default('')});
+const draftSchema = requestSchema.pick({title:true,taskId:true,supplierId:true,supplierName:true,category:true,amount:true,purpose:true,evidenceUrl:true});
+const draftClaim = /\b(?:drafted|prepared|created|submitted|sent)\b.{0,70}\b(?:draft|request)\b|\b(?:draft|request)\b.{0,55}\b(?:is ready|has been (?:drafted|created|submitted))\b/i;
 export function setAccessCode(store:Store,id:string,code:string) {
   if (code.length<8 || code.length>128) throw new Error('Use a private code of 8 to 128 characters.');
   const salt=randomBytes(16).toString('hex'); store.put('credentials',id,{salt,hash:scryptSync(code,salt,32).toString('hex')});
@@ -171,7 +172,7 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
         draft: null, proposals: [],
       }));
     }
-    const history=retrieve(message,chats,m=>m.text,10,6).sort((a,b)=>a.createdAt.localeCompare(b.createdAt)).map(m=>({role:m.role,text:m.text.slice(0,1200)}));
+    const history=(isOwner ? retrieve(message,chats,m=>m.text,10,6) : chats.slice(0,12)).sort((a,b)=>a.createdAt.localeCompare(b.createdAt)).map(m=>({role:m.role,text:m.text.slice(0,1200)}));
     const names=new Map(store.people().map(person=>[person.id,person.name]));
     const suppliers=store.suppliers();
     const projects=store.projects().filter(project=>isOwner||tasks.some(task=>task.projectId===project.id));
@@ -186,34 +187,54 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
     const memory=retrieve(message,notes,n=>n.text,6,2).map(n=>n.text.slice(0,900));
     try {
       const paymentSetup = isOwner ? o.testnet.setupStatus() : null;
-      const result=await o.callAI({mode:'workspace',agentInstructions:instructions,message,setup:paymentSetup && {
+      const payload = {mode:'workspace',agentInstructions:instructions,message,setup:paymentSetup && {
         walletSelected:!!paymentSetup.owner, agentInitialized:paymentSetup.initialized,
         agentSettings:paymentSetup.agentSettings, veloProjectLinked:!!paymentSetup.projectId,
         gasKeySaved:paymentSetup.gasKeyStored, contractStatus:paymentSetup.checks,
-        merchantLinked:paymentSetup.boundSuppliers.length>0, currentTime:new Date().toISOString(),
+        demoRecipientReady:!!paymentSetup.merchant, currentTime:new Date().toISOString(),
       },history,authenticatedPerson:assistantMember(store,p),people:isOwner?store.people().map(x=>assistantMember(store,x)):[assistantMember(store,p)],tasks,projects:projects.map(project=>({...project,committed:isOwner?store.committed(project.id):undefined})),suppliers,categories,policy:store.policy(),requests:ledger,activity,memory,spendingTotals:spendingSummary(requests),ledgerCoverage:{
         totalRequests: requests.length,
         retrievedRequests: ledger.length,
         confirmedTestnetPayments: requests.filter(isConfirmedTestnetPayment).length,
-      },moneyUnits:'Stored budgets, committed project totals, and member usage are integer stroops. Fields ending in Xlm and proposal amounts are already decimal XLM. Weekly caps reset Mondays in Manila.'});
-
-      const safeResult = sanitize(result);
+      },moneyUnits:'Stored budgets, committed project totals, and member usage are integer stroops. Fields ending in Xlm and proposal amounts are already decimal XLM. Weekly caps reset Mondays in Manila.'};
+      const parseDraft = (candidate: unknown) => {
+        const raw = z.object({supplierId:z.string().nullish(),supplierName:z.string().nullish(),evidenceUrl:z.string().max(2000).nullish()}).loose().safeParse(candidate);
+        if (!raw.success) return null;
+        const {supplierId,supplierName,evidenceUrl,...details} = raw.data;
+        const listed = suppliers.find(s => s.id === supplierId);
+        const draft = draftSchema.safeParse({
+          ...details,
+          amount: typeof details.amount === 'number' ? String(details.amount) : details.amount,
+          supplierId: listed?.id || '',
+          ...(supplierName || (supplierId && !listed) ? {supplierName:supplierName || supplierId} : {}),
+          evidenceUrl: requestSchema.shape.evidenceUrl.safeParse(evidenceUrl).success ? evidenceUrl : '',
+        });
+        if (!draft.success || !tasks.some(t => t.id === draft.data.taskId && t.active && t.assigneeId === p.id)) return null;
+        try { units(draft.data.amount); } catch { return null; }
+        return draft.data;
+      };
+      const safeResult = sanitize(await o.callAI(payload));
       const scope = z.object({scope:z.literal('workspace')}).safeParse(safeResult);
       if (!scope.success) {
         return res.json(save('assistant', 'I can help with workspace setup, assignments, spending rules, requests, and payment records. Open How it works for guidance.', {
           draft: null, proposals: [], showHelp: true,
         }));
       }
-      const answer=z.object({reply:z.string().min(1).max(7000),draft:draftSchema.nullable().default(null),proposals:z.array(proposalSchema).max(3).default([]),model:z.string().optional()}).parse(safeResult);
-      if(isOwner)answer.draft=null;
-      if(answer.draft&&(!tasks.some(t=>t.id===answer.draft!.taskId&&t.active&&t.assigneeId===p.id)||!store.suppliers().some(s=>s.id===answer.draft!.supplierId&&s.approved&&s.category===answer.draft!.category)))answer.draft=null;
-      if(answer.draft){
+      const answer=z.object({reply:z.string().min(1).max(7000),draft:z.unknown().optional(),proposals:z.array(proposalSchema).max(3).default([]),model:z.string().optional()}).parse(safeResult);
+      let draft = isOwner ? null : parseDraft(answer.draft);
+      const missingDraft = !isOwner && !draft && (answer.draft != null || draftClaim.test(answer.reply));
+      if (missingDraft) {
         try {
-          units(answer.draft.amount);
-          if(answer.draft.title.trim().length<5||answer.draft.purpose.trim().length<15)answer.draft=null;
-        } catch { answer.draft=null; }
+          const retry = sanitize(await o.callAI({...payload, agentInstructions: instructions +
+            '\nYour previous answer omitted a valid draft. Return the structured draft now if the current purchase details are known. A link and a listed supplier are optional. Otherwise ask only for the missing essential detail.'}));
+          const corrected = z.object({scope:z.literal('workspace'),reply:z.string().min(1).max(7000),draft:z.unknown().optional()}).safeParse(retry);
+          if (corrected.success) {
+            draft = parseDraft(corrected.data.draft);
+            answer.reply = corrected.data.reply;
+          }
+        } catch { /* The member can still use the manual request form. */ }
       }
-      if(answer.draft?.evidenceUrl&&!z.url().refine(value=>new URL(value).protocol==='https:').safeParse(answer.draft.evidenceUrl).success)answer.draft.evidenceUrl='';
+      const draftUnavailable = missingDraft && !draft && (draftClaim.test(answer.reply) || answer.draft != null);
       const noteRequested = /^(?:(?:please|i want (?:you |the assistant )?to|can you|could you|help me)\s+)?(?:remember\b|tandaan\b|make (?:a )?note\b|(?:save|add|i-save)\b[^.!?]*\b(?:note|memory)\b)/i.test(message);
       const proposals=[];
       for(const proposal of answer.proposals){
@@ -232,7 +253,9 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
         }
         const stored={...proposal,id:randomUUID(),personId:p.id,state:'pending',policyVersion:store.policy().version,profileVersion:store.get<Person>('people',proposal.targetId)?.profileVersion||0};store.put('proposals',stored.id,stored);proposals.push(stored);
       }
-      o.connected(answer.model);res.json(save('assistant',redact(answer.reply),{draft:answer.draft,proposals,model:answer.model,sources:ledger.map(({id,title})=>({id,title}))}));
+      const reply = draft ? 'Your draft is ready. Preview the details, make any edits, and submit it for review.'
+        : draftUnavailable ? 'I couldn’t prepare a draft from those details. You can open the request form to review and enter them yourself.' : answer.reply;
+      o.connected(answer.model);res.json(save('assistant',redact(reply),{draft,draftUnavailable,proposals,model:answer.model,sources:ledger.map(({id,title})=>({id,title}))}));
     }catch(error){o.failed(error);res.status(503).json(save('assistant','The assistant couldn’t complete this response. Your message is saved. Check Connections or continue setting up your workspace.',{draft:null,error:'The assistant couldn’t complete the response. See Connections.'}));}
   });
   app.post('/api/proposals/:id/apply',o.auth,(req,res)=>{

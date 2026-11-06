@@ -312,7 +312,7 @@ export function TestnetPanel({ data, focus, addSupplier }: { data: { suppliers: 
             </li>
             <li>In <strong>Gas Station</strong>, set up and fund the Testnet fee wallet (relayer). Refresh its balance, then turn on <strong>Enable sponsorship</strong> and save the policy.</li>
             <li>Go to <strong>Build → API Keys</strong>, generate a <strong>Gas Station · Testnet</strong> key, then paste it below and select <strong>Save key</strong>.</li>
-            <li>For a demo purchase, choose an approved supplier below and select <strong>Link demo recipient</strong>. Its website can be fictional. Only the linked demo wallet receives test XLM.</li>
+            <li>All test purchases send test XLM to the demo recipient created in step 2. You can optionally link a supplier for your setup records.</li>
           </ol>
         </details>
         <form className="testnet-actions" onSubmit={e => {
@@ -339,9 +339,9 @@ export function TestnetPanel({ data, focus, addSupplier }: { data: { suppliers: 
           <button className="secondary-btn" disabled={!!busy || !connected || !gasKey.trim()}>Save key</button>
         </form>}
         <h4 className="payment-subheading">Optional setup for a test purchase</h4>
-        <p>A supplier is a shop or service your team can request to buy from, such as a print shop or a design tool. Allowance sends test funds to a demo account when you link a supplier here. The actual business receives no payment.</p>
+        <p>A supplier is a shop or service your team can request to buy from, such as a print shop or a design tool. All Testnet payments go to the workspace demo recipient. The actual business receives no payment.</p>
         <p className="payment-step-status"><strong>{supplierLinked ? 'Demo recipient linked' : 'Demo recipient for purchase testing'}</strong>
-          {' · '}{supplierLinked ? 'Test payments for this supplier go to the demo account.' : !approved.length ? 'Add and approve a supplier first.' : !state.initialized ? 'Create test payment accounts in step 2 first.' : 'Choose a supplier and link the demo recipient.'}
+          {' · '}{supplierLinked ? 'This supplier is linked in your setup records.' : state.initialized ? 'The workspace demo recipient is ready. Linking a supplier is optional.' : 'Create the demo recipient in step 2.'}
         </p>
         <div className="testnet-actions">
           {approved.length > 0 && <label>Approved shop or service<select value={supplierId} disabled={!!busy} onChange={e => setSupplier(e.target.value)}>

@@ -358,7 +358,7 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
     return await followPayment(existing,r,actor);
    }
    if(automatic && (existing || !store.canAutoApprove(r)))throw new Error('This purchase needs owner review under the current rules.');
-   const c=config();const supplier=store.get<Supplier>('suppliers',r.supplierId);const binding=supplier&&store.get<{merchant:string}>('testnet-supplier',c.owner+':'+supplier.id);if(!c.agent||!c.merchant||!supplier?.approved||(binding?.merchant||supplier.destination)!==c.merchant)throw new Error('Bind an approved supplier to the demo merchant first.');
+   const c=config();if(!c.agent||!c.merchant)throw new Error('Initialize the workspace’s Testnet agent and demo recipient first.');
    const velo=gas();
    if(!note.trim())throw new Error('Add a decision note.');const failed=store.checks(r).filter(v=>!v.pass);if(failed.length)throw new Error(failed.map(v=>v.detail).join(' '));if(!['needs_review','blocked'].includes(r.status))throw new Error('Request is not available for payment.');
    const agent=getKey(keyName(c,'agent'));const check=await noir.checkPayment({deviceHash:c.deviceHash,agent:agent.publicKey(),asset,amount:BigInt(r.amount)});if(!check.ok)throw new Error(`Noir refused payment: ${check.reason}`);
