@@ -122,12 +122,36 @@ export function createApp(store: Store, options: AppOptions = {}, dispatch?: exp
     store.put('evidence', id, record); res.json(record);
   });
   app.get('/api/evidence/:id', auth, (req, res) => { const record = store.get<any>('evidence', String(req.params.id)); if (!record || (res.locals.person.role !== 'owner' && record.personId !== res.locals.person.id)) return res.status(404).json({ error: 'Evidence not found.' }); res.setHeader('content-type', record.mime); res.setHeader('content-disposition', `attachment; filename="${record.name}"`); res.send(readFileSync(resolve(dataDirectory(), 'evidence', record.id+'.bin'))); });
-  app.get('/api/bootstrap', auth, (_req, res) => {
-    const p = res.locals.person as Person; const requests = store.requests().filter(r => p.role === 'owner' || r.requesterId === p.id);
-    const tasks = store.tasks().filter(t => p.role === 'owner' || t.assigneeId === p.id);
+  function getWorkspace(_req: Request, res: Response) {
+    const p = res.locals.person as Person;
+    const isOwner = p.role === 'owner';
+    const requests = store.requests().filter(r => isOwner || r.requesterId === p.id);
+    const tasks = store.tasks().filter(t => isOwner || t.assigneeId === p.id);
     const projectIds = new Set(tasks.map(t => t.projectId));
-    res.json({ messages: store.personRecords<any>('chat',p.id).slice(0,40).reverse().map(message => ({ ...message, proposals: message.proposals?.map((proposal: { id: string }) => store.get('proposals', proposal.id) || proposal) })), person: publicMember(store,p), people: p.role === 'owner' ? store.people().map(x=>publicMember(store,x)) : [publicMember(store,p)], projects: store.projects().filter(pr => p.role === 'owner' || projectIds.has(pr.id)).map(pr => ({ ...pr, committed: store.committed(pr.id) })), tasks, suppliers: store.suppliers(), policy: store.policy(), requests: requests.map(r => ({ ...r, checks: store.checks(r) })), events: store.events().filter(e => p.role === 'owner' || (e.requestId && requests.some(r => r.id === e.requestId))), categories, ai: aiState, integrations: { payments: 'testnet', wallet: false, velo: false, noir: false, n8nUrl: 'http://localhost:5679', sampleWorkspace: store.setting('workspace-kind') !== 'blank' } });
-  });
+    const projects = store.projects()
+      .filter(project => isOwner || projectIds.has(project.id))
+      .map(project => ({ ...project, committed: store.committed(project.id) }));
+    const messages = store.personRecords<any>('chat', p.id).slice(0, 40).reverse()
+      .map(message => ({
+        ...message,
+        proposals: message.proposals?.map((proposal: { id: string }) => store.get('proposals', proposal.id) || proposal),
+      }));
+    res.json({
+      messages,
+      person: publicMember(store, p),
+      people: (isOwner ? store.people() : [p]).map(person => publicMember(store, person)),
+      projects,
+      tasks,
+      suppliers: store.suppliers(),
+      policy: store.policy(),
+      requests: requests.map(r => ({ ...r, checks: store.checks(r) })),
+      events: store.events().filter(e => isOwner || (e.requestId && requests.some(r => r.id === e.requestId))),
+      categories,
+      ai: aiState,
+      integrations: { payments: 'testnet', wallet: false, velo: false, noir: false, n8nUrl: 'http://localhost:5679', sampleWorkspace: store.setting('workspace-kind') !== 'blank' },
+    });
+  }
+  app.get('/api/bootstrap', auth, getWorkspace);
   app.post('/api/requests', auth, (req, res) => {
     const input = requestSchema.parse(req.body); const p = res.locals.person as Person;
     const task = store.get<Task>('tasks', input.taskId); if (!task || task.assigneeId !== p.id) return res.status(403).json({ error: 'Choose a task assigned to your member account.' });

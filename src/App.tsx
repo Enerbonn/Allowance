@@ -6,6 +6,7 @@ import './responsive-fixes.css';
 import {SignIn,TeamConsole,AgentMemory,ProposalCard} from './Workspace';
 import {TestnetPanel, getTestnetStatus, type TestnetStatus, type PaymentStep} from './Testnet';
 import {OwnerSetup, type SetupAction} from './OwnerSetup';
+import { pagePath, projectRequestsPath, readRoute, requestPath, type Page } from './routes';
 import type { SpendRequest, Person, Policy, Project, Task, Supplier, Event, Check as PolicyCheck } from '../server/domain';
 
 type RequestItem = SpendRequest & { checks: PolicyCheck[] };
@@ -31,8 +32,11 @@ function Modal({ title, subtitle, onClose, children, wide = false }: { title: st
 function App() {
   const [data, setData] = useState<Data | null>(null);
   const activeRole = useRef<Person['role'] | null>(null);
-  const [page, setPage] = useState('Overview'), [selected, setSelected] = useState<string | null>(null);
-  const [filter, setFilter] = useState('all'), [search, setSearch] = useState(''), [projectFilter, setProjectFilter] = useState('');
+  const [route, setRoute] = useState(() => readRoute(window.location.pathname));
+  const { page, requestId: selected, projectId } = route;
+  const projectFilter = projectId ?? '';
+  const [checkingSession, setCheckingSession] = useState(true);
+  const [filter, setFilter] = useState('all'), [search, setSearch] = useState('');
   const [modal, setModal] = useState<'new' | 'identity' | 'help' | 'people' | 'projects' | 'tasks' | 'suppliers' | null>(null), [error, setError] = useState(''), [toast, setToast] = useState(''), [mobileNav, setMobileNav] = useState(false);
   const [busy, setBusy] = useState('');
   const [paymentStep, setPaymentStep] = useState<PaymentStep>();
@@ -61,22 +65,63 @@ function App() {
     if (next.person.role !== role) throw new Error('That session belongs to a different role. Sign in with your private code.');
     activeRole.current = role;
     setData(next);
-    setSelected(null);
-    setPage('Overview');
     setError('');
   }
+  useEffect(() => {
+    let active = true;
+    void api<Data>('/bootstrap').then(next => {
+      if (!active) return;
+      activeRole.current = next.person.role;
+      setData(next);
+    }).catch(() => {
+      // The role picker handles sign-in when there is no usable session.
+    }).finally(() => { if (active) setCheckingSession(false); });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    function restoreRoute() {
+      setRoute(readRoute(window.location.pathname));
+      setMobileNav(false);
+      setSearch('');
+      setFilter('all');
+      setModal(null);
+    }
+    window.addEventListener('popstate', restoreRoute);
+    return () => window.removeEventListener('popstate', restoreRoute);
+  }, []);
   useEffect(() => { const timer = setInterval(() => { if (data) void load(); }, data?.requests.some(r => r.status === 'analyzing') ? 2000 : 15000); return () => clearInterval(timer); }, [!!data, data?.requests.some(r => r.status === 'analyzing')]);
   useEffect(() => { if (toast) { const t = setTimeout(() => setToast(''), 5000); return () => clearTimeout(t); } }, [toast]);
   useEffect(() => { const handler = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); document.getElementById('global-search')?.focus(); } }; window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler); }, []);
   async function run(label: string, action: () => Promise<unknown>, success?: string) { setBusy(label); setError(''); try { await action(); await load(); if (success) setToast(success); } catch (e) { setError((e as Error).message); } finally { setBusy(''); } }
   const owner = data?.person.role === 'owner';
-  const nav = [{ name: 'Overview', icon: LayoutDashboard }, { name: 'Requests', icon: FileText }, { name: 'Spend assistant', icon: MessageSquare }, { name: 'Projects', icon: Layers3 }, { name: 'Team', icon: Users }, { name: 'Spending policy', icon: SlidersHorizontal }, { name: 'Activity', icon: Activity }, { name: 'Saved notes', icon: Sparkles }];
-  const request = data?.requests.find(r => r.id === selected);
+  const nav = [{ name: 'Overview', icon: LayoutDashboard }, { name: 'Requests', icon: FileText }, { name: 'Spend assistant', icon: MessageSquare }, { name: 'Projects', icon: Layers3 }, { name: 'Team', icon: Users }, { name: 'Spending policy', icon: SlidersHorizontal }, { name: 'Activity', icon: Activity }, { name: 'Saved notes', icon: Sparkles }] as const;
+  const project = data?.projects.find(p => p.id === projectId);
+  const request = data?.requests.find(r => r.id === selected && (!projectId || (project && r.projectId === projectId)));
   const reviewCount = data?.requests.filter(r => r.status === 'needs_review').length || 0;
   const paid = data?.requests.filter(r => r.status === 'paid') || [];
   const totalSpent = (data?.person.role==='owner' ? data?.projects.reduce((a, p) => a + p.committed, 0) : data?.requests.filter(r=>r.status==='paid'||r.status==='authorized').reduce((a,r)=>a+r.amount,0)) || 0;
   const totalBudget = data?.projects.reduce((a, p) => a + Math.min(p.budget, data.policy.projectLimit), 0) || 0;
-  function navigate(name: string) { setPage(name); setMobileNav(false); setSearch(''); setProjectFilter(''); if (!['Overview', 'Requests'].includes(name)) setSelected(null); }
+  function go(path: string, replace = false) {
+    if (window.location.pathname !== path) {
+      if (replace) window.history.replaceState(null, '', path);
+      else window.history.pushState(null, '', path);
+      setRoute(readRoute(path));
+    }
+    setMobileNav(false);
+  }
+  function navigate(name: Page) {
+    go(pagePath(name));
+    setSearch('');
+    setFilter('all');
+  }
+  function showProject(id: string) {
+    setSearch('');
+    setFilter('all');
+    go(projectRequestsPath(id));
+  }
+  function showRequest(id: string, project?: string) {
+    go(requestPath(id, project));
+  }
 
   function askForSetup(prompt: string) {
     sessionStorage.setItem('assistant-prefill', prompt);
@@ -92,11 +137,13 @@ function App() {
     }
   }
 
+  if (checkingSession) return <main className="loading-page" role="status"><LoaderCircle size={22} className="spin" aria-hidden="true"/>Opening your workspace…</main>;
+
   if (!data) return <div className="welcome"><div className="welcome-art"><Brand/><div><span className="line-art"><ShieldCheck size={90} strokeWidth={1}/></span><h1>Good work<br/>shouldn’t wait.</h1><p>Give your team room to move.<br/>Keep every purchase within reach.</p></div><span>Private member access · Local prototype</span></div><main className="welcome-form" id="main"><SignIn ready={enter}/></main></div>;
 
   return <><a className="skip-link" href="#main">Skip to main content</a><div className={`shell ${request ? 'has-detail' : ''}`}>
     <aside className={`sidebar ${mobileNav ? 'open' : ''}`}><Brand/><button className="workspace-switch" onClick={() => setModal('identity')}><span className="workspace-logo">N</span><span>Team workspace<small>Local prototype</small></span><ChevronDown size={14}/></button><div className="nav-label">Workspace</div><nav aria-label="Main navigation">{nav.map(({ name, icon: Icon }) => <button key={name} aria-current={page === name ? 'page' : undefined} className={page === name ? 'active' : ''} onClick={() => navigate(name)}><Icon size={18}/><span>{name}</span>{name === 'Requests' && reviewCount > 0 && <span className="nav-count">{reviewCount}</span>}</button>)}</nav><div className="sidebar-bottom"><div className="allowance-note"><span className="small-symbol"><ShieldCheck size={17}/></span><strong>Clear rules. More freedom.</strong><p>Your team gets the resources.<br/>You keep the oversight.</p><button onClick={() => navigate('Spending policy')}>View spending policy <ArrowUpRight size={14}/></button></div><button className={page === 'Connections' ? 'bottom-link active' : 'bottom-link'} onClick={() => navigate('Connections')}><Settings size={18}/>Connections</button><button className="bottom-link" onClick={() => setModal('help')}><CircleHelp size={18}/>How it works</button><button className="profile" onClick={() => setModal('identity')}><Avatar person={data.person} small/><span>{data.person.name}<small>{owner ? 'Owner view' : 'Team member view'}</small></span><ChevronDown size={14}/></button></div></aside>
-    <div className="app-body"><header className="topbar"><div className="breadcrumbs"><button className="icon-btn mobile-menu" aria-label="Toggle navigation" onClick={() => setMobileNav(!mobileNav)}><Menu size={20}/></button><span>Workspace</span><ChevronRight size={13}/><strong>{page}</strong></div><div className="top-actions"><div className="search-box"><Search size={15}/><input id="global-search" aria-label="Search requests" placeholder="Search requests…" value={search} onChange={e => { setSearch(e.target.value); setPage('Requests'); }}/><kbd>Ctrl K</kbd></div><span className="local-label"><CircleDot size={12}/>Local prototype</span></div></header>
+    <div className="app-body"><header className="topbar"><div className="breadcrumbs"><button className="icon-btn mobile-menu" aria-label="Toggle navigation" onClick={() => setMobileNav(!mobileNav)}><Menu size={20}/></button><span>Workspace</span><ChevronRight size={13}/><strong>{page}</strong></div><div className="top-actions"><div className="search-box"><Search size={15}/><input id="global-search" aria-label="Search requests" placeholder="Search requests…" value={search} onChange={e => { if (page !== 'Requests') navigate('Requests'); setSearch(e.target.value); }}/><kbd>Ctrl K</kbd></div><span className="local-label"><CircleDot size={12}/>Local prototype</span></div></header>
     <div className="prototype-strip"><span><span className="live-dot"/>{data.integrations.sampleWorkspace ? 'Sample workspace' : 'Your workspace'}</span><p>{data.integrations.sampleWorkspace ? 'Sample records. Spending follows the workspace rules.' : 'Eligible purchases can proceed within the rules you set.'}</p><button onClick={() => navigate('Connections')}>Connection status <ArrowUpRight size={12}/></button></div>
     {error && <div role="alert" className="error-banner floating-error"><CircleAlert size={18}/><span>{error}</span><button className="icon-btn" onClick={() => setError('')} aria-label="Dismiss error"><X size={16}/></button></div>}
     <div className="workspace-body"><main className="main-content" id="main">
@@ -107,23 +154,23 @@ function App() {
         <SpendingMonitor data={data} openEscrow={() => openSetup('escrow')}/>
         <div className="stat-row"><div><span className="stat-icon"><Clock3 size={18}/></span><span><strong>{reviewCount}</strong><small>Awaiting review</small></span></div><div><span className="stat-icon"><CheckCircle2 size={18}/></span><span><strong>{paid.length}</strong><small>Completed requests</small></span></div><div><span className="stat-icon"><ShieldCheck size={18}/></span><span><strong>{data.policy.paused ? 'Paused' : 'Active'}</strong><small>Spending policy · v{data.policy.version}</small></span></div></div>
         <div className="section-head"><div><h2>{owner ? 'On your desk' : 'Your requests'}</h2><p>{owner ? 'A little context for every decision.' : 'Every update, from request to receipt.'}</p></div><button className="text-btn" onClick={() => navigate('Requests')}>All requests <ArrowRight size={15}/></button></div>
-        <RequestTable data={data} requests={data.requests.slice(0, 5)} selected={selected} onSelect={setSelected}/>
-        <div className="section-head project-section"><div><h2>Projects</h2><p>Resources follow the work they support.</p></div><button className="text-btn" onClick={() => navigate('Projects')}>Projects <ArrowRight size={15}/></button></div><div className="project-grid">{data.projects.map((p, i) => <ProjectCard key={p.id} p={p} i={i} limit={data.policy.projectLimit} onClick={() => { navigate('Requests'); setProjectFilter(p.id); }}/>)}</div>
+        <RequestTable data={data} requests={data.requests.slice(0, 5)} selected={selected} onSelect={id => showRequest(id)}/>
+        <div className="section-head project-section"><div><h2>Projects</h2><p>Resources follow the work they support.</p></div><button className="text-btn" onClick={() => navigate('Projects')}>Projects <ArrowRight size={15}/></button></div><div className="project-grid">{data.projects.map((p, i) => <ProjectCard key={p.id} p={p} i={i} limit={data.policy.projectLimit} onClick={() => showProject(p.id)}/>)}</div>
         <div className="quiet-footer"><ShieldCheck size={14}/><span>Every purchase has a purpose, a policy, and a record.</span></div>
       </>}
-      {page === 'Requests' && <><div className="page-heading"><div><h1>Requests</h1><p>From “I need this” to a clear decision.</p></div><button className="primary-btn" onClick={() => { setDraft(null); setModal(owner ? 'identity' : 'new'); }}><Plus size={17}/>New request</button></div><div className="filter-bar"><div className="tabs" role="group" aria-label="Request status">{[['all', 'All requests'], ['needs_review', 'Needs review'], ['paid', 'Completed'], ['blocked', 'Blocked']].map(([id, label]) => <button key={id} className={filter === id ? 'active' : ''} onClick={() => setFilter(id)}>{label}{id === 'needs_review' && <span>{reviewCount}</span>}</button>)}</div><select aria-label="Filter by project" value={projectFilter} onChange={e => setProjectFilter(e.target.value)}><option value="">All projects</option>{data.projects.map(p => <option value={p.id} key={p.id}>{p.name}</option>)}</select></div><RequestTable data={data} requests={data.requests.filter(r => (filter === 'all' || r.status === filter) && (!projectFilter || r.projectId === projectFilter) && `${r.title} ${r.id} ${r.purpose}`.toLowerCase().includes(search.toLowerCase()))} selected={selected} onSelect={setSelected}/></>}
-      {page === 'Spend assistant' && <AssistantPage data={data} onDraft={d => { setDraft(d); setModal('new'); }} refresh={load} openSetup={openSetup} onRequest={id=>{navigate('Requests');setFilter('all');setSelected(id);}}/> }
-      {page === 'Projects' && <><div className="page-heading"><div><h1>Projects and allowances</h1><p>Keep resources connected to the work.</p></div>{owner && <button className="primary-btn" onClick={() => setModal('projects')}><Plus size={16}/>New project</button>}</div><div className="project-grid large">{data.projects.map((p, i) => <ProjectCard key={p.id} p={p} i={i} limit={data.policy.projectLimit} onClick={() => { navigate('Requests'); setProjectFilter(p.id); }}/>)}</div><div className="section-head"><h2>Assigned work</h2>{owner && <button className="secondary-btn" onClick={() => setModal('tasks')}><Plus size={14}/>Assign task</button>}</div><div className="surface-list">{data.tasks.map(t => <div className="task-row" key={t.id}><span className="task-mark"><FolderOpen size={19}/></span><span><strong>{t.title}</strong><p>{t.description}</p><small>{data.projects.find(p => p.id === t.projectId)?.name}</small></span><Avatar person={data.people.find(p => p.id === t.assigneeId)}/></div>)}</div></>}
+      {page === 'Requests' && <>{projectId && !project ? <p role="status">Project unavailable.</p> : selected && !request ? <p role="status">Request unavailable.</p> : null}<div className="page-heading"><div><h1>{project ? project.name + ' requests' : 'Requests'}</h1><p>From “I need this” to a clear decision.</p></div><button className="primary-btn" onClick={() => { setDraft(null); setModal(owner ? 'identity' : 'new'); }}><Plus size={17}/>New request</button></div><div className="filter-bar"><div className="tabs" role="group" aria-label="Request status">{[['all', 'All requests'], ['needs_review', 'Needs review'], ['paid', 'Completed'], ['blocked', 'Blocked']].map(([id, label]) => <button key={id} className={filter === id ? 'active' : ''} onClick={() => setFilter(id)}>{label}{id === 'needs_review' && <span>{reviewCount}</span>}</button>)}</div><select aria-label="Filter by project" value={projectFilter} onChange={e => e.target.value ? showProject(e.target.value) : navigate('Requests')}><option value="">All projects</option>{data.projects.map(p => <option value={p.id} key={p.id}>{p.name}</option>)}</select></div><RequestTable data={data} requests={data.requests.filter(r => (filter === 'all' || r.status === filter) && (!projectFilter || r.projectId === projectFilter) && `${r.title} ${r.id} ${r.purpose}`.toLowerCase().includes(search.toLowerCase()))} selected={selected} onSelect={id => showRequest(id, project?.id)}/></>}
+      {page === 'Spend assistant' && <AssistantPage data={data} onDraft={d => { setDraft(d); setModal('new'); }} refresh={load} openSetup={openSetup} onRequest={id => { setSearch(''); setFilter('all'); showRequest(id); }}/> }
+      {page === 'Projects' && <><div className="page-heading"><div><h1>Projects and allowances</h1><p>Keep resources connected to the work.</p></div>{owner && <button className="primary-btn" onClick={() => setModal('projects')}><Plus size={16}/>New project</button>}</div><div className="project-grid large">{data.projects.map((p, i) => <ProjectCard key={p.id} p={p} i={i} limit={data.policy.projectLimit} onClick={() => showProject(p.id)}/>)}</div><div className="section-head"><h2>Assigned work</h2>{owner && <button className="secondary-btn" onClick={() => setModal('tasks')}><Plus size={14}/>Assign task</button>}</div><div className="surface-list">{data.tasks.map(t => <div className="task-row" key={t.id}><span className="task-mark"><FolderOpen size={19}/></span><span><strong>{t.title}</strong><p>{t.description}</p><small>{data.projects.find(p => p.id === t.projectId)?.name}</small></span><Avatar person={data.people.find(p => p.id === t.assigneeId)}/></div>)}</div></>}
       {page === 'Team' && <TeamConsole data={data} refresh={load} add={()=>setModal('people')} ask={text=>{sessionStorage.setItem('assistant-prefill',text);navigate('Spend assistant');}}/>}
       {page === 'Saved notes' && <AgentMemory owner={!!owner} ask={text=>{sessionStorage.setItem('assistant-prefill',text);navigate('Spend assistant');}}/>}
       {page === 'Spending policy' && <PolicyPage data={data} busy={busy} addSupplier={() => setModal('suppliers')} save={p => run('policy', () => api('/policy', { method: 'PUT', body: JSON.stringify(p) }), 'Spending policy saved. New decisions use these rules.')}/>}
-      {page === 'Activity' && <><div className="page-heading"><div><h1>Activity</h1><p>Requests, decisions, and payments in one timeline.</p></div>{owner && <a className="secondary-btn" href="/api/export" download><ArrowDownToLine size={15}/>Export expenses</a>}</div><ActivityList data={data} onSelect={id => { navigate('Requests'); setSelected(id); }}/></>}
+      {page === 'Activity' && <><div className="page-heading"><div><h1>Activity</h1><p>Requests, decisions, and payments in one timeline.</p></div>{owner && <a className="secondary-btn" href="/api/export" download><ArrowDownToLine size={15}/>Export expenses</a>}</div><ActivityList data={data} onSelect={id => { setSearch(''); setFilter('all'); showRequest(id); }}/></>}
       {page === 'Connections' && <><Connections data={data} busy={busy} test={() => run('ai', () => api('/ai/test', { method: 'POST' }), 'Assistant connection verified.')} />{owner&&<TestnetPanel data={data} focus={paymentStep}/>}</>}
-    </main>{request && ['Overview', 'Requests'].includes(page) && <RequestDetail data={data} request={request} busy={busy} close={() => setSelected(null)} action={(a, note) => run('decision', () => api(`/requests/${request.id}/${request.mode==='testnet'&&a==='approve'?'testnet':'decision'}`, { method: 'POST', body: JSON.stringify({ action: a, note }) }), a === 'approve' ? (request.mode==='testnet'?'Testnet operation updated. Check settlement status.':'Testnet payments use the authorized wallet.') : 'Request declined.')} retry={() => run('review', () => api(`/requests/${request.id}/review`, { method: 'POST' }))} cancel={() => run('cancel', () => api(`/requests/${request.id}/cancel`, { method: 'POST' }), 'Request cancelled.')}/>}</div></div>
+    </main>{request && ['Overview', 'Requests'].includes(page) && <RequestDetail data={data} request={request} busy={busy} close={() => go(project ? projectRequestsPath(project.id) : pagePath('Requests'), true)} action={(a, note) => run('decision', () => api(`/requests/${request.id}/${request.mode==='testnet'&&a==='approve'?'testnet':'decision'}`, { method: 'POST', body: JSON.stringify({ action: a, note }) }), a === 'approve' ? (request.mode==='testnet'?'Testnet operation updated. Check settlement status.':'Testnet payments use the authorized wallet.') : 'Request declined.')} retry={() => run('review', () => api(`/requests/${request.id}/review`, { method: 'POST' }))} cancel={() => run('cancel', () => api(`/requests/${request.id}/cancel`, { method: 'POST' }), 'Request cancelled.')}/>}</div></div>
     {toast && <div className="toast" role="status"><CheckCircle2 size={18}/>{toast}<button aria-label="Dismiss notification" onClick={() => setToast('')}><X size={15}/></button></div>}
     {modal && ['people','projects','tasks','suppliers'].includes(modal) && <SetupRecord kind={modal} data={data} close={() => setModal(null)} saved={async () => { await load(); setModal(null); setToast('Workspace updated. This is a local demo record.'); }}/>}
-    {modal === 'identity' && <Modal title="Your verified session" subtitle="Each person uses their own email and private code." onClose={()=>setModal(null)}><p>Signed in as <strong>{data.person.name}</strong> · {data.person.title}</p><p>Sign-in email: {data.person.email}</p><button className="secondary-btn" onClick={async()=>{await api('/session',{method:'DELETE'});activeRole.current=null;setData(null);setModal(null);}}>Sign out to use another account</button></Modal>}
-    {modal === 'new' && <NewRequest data={data} initial={draft} close={() => { setDraft(null); setModal(null); }} created={async id => { setModal(null); navigate('Requests'); setFilter('all'); setSelected(id); await load(); setToast('Request saved. We’re checking the details.'); }}/ >}
+    {modal === 'identity' && <Modal title="Your verified session" subtitle="Each person uses their own email and private code." onClose={()=>setModal(null)}><p>Signed in as <strong>{data.person.name}</strong> · {data.person.title}</p><p>Sign-in email: {data.person.email}</p><button className="secondary-btn" onClick={async()=>{await api('/session',{method:'DELETE'});activeRole.current=null;setData(null);setModal(null);go(pagePath('Overview'), true);}}>Sign out to use another account</button></Modal>}
+    {modal === 'new' && <NewRequest data={data} initial={draft} close={() => { setDraft(null); setModal(null); }} created={async id => { setModal(null); setSearch(''); setFilter('all'); await load(); showRequest(id); setToast('Request saved. We’re checking the details.'); }}/ >}
     {modal === 'help' && <Modal title="How spending works" onClose={() => setModal(null)}><div className="help-steps">{[['The owner sets the rules', 'Assign work, approve suppliers, and decide the spending limits.'], ['A teammate asks for a resource', 'Include the task, supplier, amount, purpose, and a quote link.'], ['The assistant gathers context', 'The assistant checks the request against the task, supplier and policy.'], ['A clear decision follows', 'Eligible purchases can proceed automatically within the rules. Uncertain requests wait for the owner.'], ['Every outcome leaves a record', 'The expense, decision, and receipt stay linked to the work.']].map(([t, p], i) => <div key={t}><span>{i + 1}</span><section><h3>{t}</h3><p>{p}</p></section></div>)}</div><div className="notice"><CircleAlert size={18}/><p>Payments require the owner to complete Stellar Testnet wallet, escrow, and Velo Gas setup in Connections. Purchasing instructions are operational rules, not a reviewed legal agreement.</p></div></Modal>}
   </div></>;
 }
@@ -158,7 +205,7 @@ function SpendingMonitor({data,openEscrow}:{data:Data;openEscrow:()=>void}) {
 }
 
 function Brand() { return <div className="brand"><span className="brand-icon"><span/><span/><span/></span><strong>allowance<span>®</span></strong></div>; }
-function RequestTable({ data, requests, selected, onSelect }: { data: Data; requests: RequestItem[]; selected: string | null; onSelect: (id: string) => void }) {
+function RequestTable({ data, requests, selected, onSelect }: { data: Data; requests: RequestItem[]; selected?: string; onSelect: (id: string) => void }) {
   return <div className="request-table"><div className="table-head"><span>Request / team member</span><span>Amount</span><span>Status</span><span/></div>{requests.length ? requests.map(r => <button key={r.id} className={`request-row ${selected === r.id ? 'selected' : ''}`} onClick={() => onSelect(r.id)}><span className="request-name"><span className={`request-icon ${r.category === 'Software' ? 'software' : ''}`}>{r.category === 'Software' ? <Command size={17}/> : r.category === 'Equipment' ? <CreditCard size={17}/> : <Layers3 size={17}/>}</span><span><strong>{r.title}</strong><small>{data.people.find(p => p.id === r.requesterId)?.name || 'Team member'}<span> / </span>{data.projects.find(p => p.id === r.projectId)?.name}</small></span></span><span className="table-amount">{amount(r.amount)}<small>XLM</small></span><Badge status={r.status} mode={r.mode}/><ChevronRight className="row-chevron" size={15}/></button>) : <div className="empty-state"><FileText size={30}/><h3>No matching requests</h3><p>Change the filters or submit a request from a team identity.</p></div>}</div>;
 }
 function ProjectCard({ p, i, limit, onClick }: { p: Project & { committed: number }; i: number; limit: number; onClick: () => void }) { const cap = Math.min(p.budget, limit); return <button className={`project-card project-${i}`} onClick={onClick}><div className="project-card-top"><span className="project-monogram">{i === 0 ? <Sparkles size={21}/> : <Layers3 size={21}/>}</span><ArrowUpRight size={17}/></div><h3>{p.name}</h3><p>{p.description}</p><div className="project-budget"><strong>{amount(Math.max(0, cap - p.committed))} <small>XLM left</small></strong><span>{amount(p.committed)} committed</span></div><div className="progress"><span style={{ width: `${Math.min(100, p.committed / Math.max(1, cap) * 100)}%` }}/></div></button>; }

@@ -8,6 +8,9 @@
     "api/gateway.ts": { "maxDuration": 120 }
   },
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/api/gateway?route=:path*" }
+    { "source": "/api/:path*", "destination": "/api/gateway?route=:path*" },
+    { "source": "/:page(assistant|team|spending-policy|activity|saved-notes|connections)", "destination": "/index.html" },
+    { "source": "/projects/:path*", "destination": "/index.html" },
+    { "source": "/requests/:path*", "destination": "/index.html" }
   ]
 }
