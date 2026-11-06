@@ -45,6 +45,11 @@ export function createWorkspaceApp(primary: Store, config: AppOptions = {}) {
       if (attempt.count >= 5) return res.status(429).json({ error: 'Too many signups. Try again in 15 minutes.' });
       signupAttempts.set(ip, { ...attempt, count: attempt.count + 1 });
       create = true;
+    } else if (req.method === 'POST' && req.path === '/api/auth/owner-email') {
+      const candidate = emailSchema.safeParse(req.body?.email);
+      if (candidate.success && existsSync(resolve(root, workspaceId(candidate.data), 'allowance.sqlite'))) {
+        return res.status(409).json({ error: 'An owner account already uses this email. Use a different email for the older workspace.' });
+      }
     } else if (req.method === 'POST' && req.path === '/api/session') {
       const candidate = emailSchema.safeParse(req.body?.role === 'owner' ? req.body.email : req.body?.workspaceEmail);
       if (candidate.success && candidate.data !== primaryOwner?.email) id = workspaceId(candidate.data);
