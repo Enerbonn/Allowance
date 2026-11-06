@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Wallet, RefreshCw, ShieldCheck, ExternalLink } from 'lucide-react';
 import { getNetworkDetails } from '@stellar/freighter-api';
-
-const TESTNET = 'Test SDF Network ; September 2015';
+import { restoreWalletSession, TESTNET } from './wallet-session';
 
 let walletKit: Promise<typeof import('@creit.tech/stellar-wallets-kit/sdk').StellarWalletsKit> | undefined;
 function getWalletKit() {
@@ -15,6 +14,10 @@ function getWalletKit() {
     return StellarWalletsKit;
   });
   return walletKit;
+}
+
+function restoreSavedWallet(owner: string) {
+  return restoreWalletSession(owner, async () => (await getWalletKit()).selectedModule);
 }
 
 export type TestnetStatus = {
@@ -95,11 +98,17 @@ export function TestnetPanel({ data, focus }: { data: { suppliers: Supplier[]; p
   const supplierId = approved.some(s => s.id === supplier) ? supplier : approved[0]?.id || '';
 
   useEffect(() => {
-    void getTestnetStatus().then((value) => {
+    let active = true;
+    void getTestnetStatus().then(async value => {
+      if (!active) return;
+      const restored = await restoreSavedWallet(value.owner);
+      if (!active) return;
+      setWallet(restored);
       setState(value);
       setProjectInput(value.projectId);
       loadAgentTerms(value);
-    }).catch(e => setError(e.message));
+    }).catch(e => { if (active) setError(e.message); });
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -170,16 +179,18 @@ export function TestnetPanel({ data, focus }: { data: { suppliers: Supplier[]; p
     <ol className="testnet-steps">
       <li id="testnet-step-wallet">
         <h3>Choose your owner wallet</h3>
-        <p>Add any supported Stellar Testnet account. Select one saved wallet to manage at a time. Reconnect it to sign.</p>
+        <p>Add a supported Stellar Testnet account or select a saved wallet to manage.</p>
         <button className="secondary-btn" disabled={!!busy} onClick={() => void run('wallet connection', connect)}><Wallet size={15}/>{state.owner ? 'Connect or add wallet' : 'Connect owner wallet'}</button>
         {state.wallets.length > 0 && <label>Saved wallet<select value={state.owner} disabled={!!busy} onChange={e => {const address=e.target.value;if(!address)return;void run('wallet switch',async()=>{
           const next:TestnetStatus=await api('/testnet/wallet',{address});setWallet('');setProjectInput(next.projectId);setGasKey('');setDeposit('');setWithdrawal('');loadAgentTerms(next);
+          setWallet(await restoreSavedWallet(next.owner));
         });}}><option value="" disabled>Choose a saved wallet</option>{state.wallets.map(w => <option key={w.owner} value={w.owner}>{w.owner.slice(0,8)}…{w.owner.slice(-6)}{w.projectId ? ' · Velo linked' : ''}</option>)}</select></label>}
         {state.owner && <button className="text-btn" disabled={!!busy} onClick={() => void run('wallet disconnect',async()=>{
-          await api('/testnet/disconnect',{});setWallet('');setProjectInput('');setGasKey('');setDeposit('');setWithdrawal('');if(walletKit)await (await walletKit).disconnect().catch(()=>{});
+          await api('/testnet/disconnect',{});setWallet('');setProjectInput('');setGasKey('');setDeposit('');setWithdrawal('');if(walletKit)await walletKit.then(kit=>kit.disconnect()).catch(()=>{});
           setMessage('Wallet disconnected. Saved settings and past payments are still available.');
         })}>Disconnect active wallet</button>}
         {state.owner && <small>{connected ? 'Connected' : 'Saved wallet'} · {state.owner}</small>}
+        {state.owner && !connected && <p>To enable wallet actions, unlock the saved account on Stellar Testnet, then choose <strong>Connect or add wallet</strong>. Your saved setup is still here.</p>}
         {connected && <a className="text-btn" href={'https://friendbot.stellar.org/?addr=' + encodeURIComponent(wallet)} target="_blank" rel="noreferrer">Fund a new wallet with Friendbot <ExternalLink size={14}/></a>}
       </li>
       <li id="testnet-step-agent">
