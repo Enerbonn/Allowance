@@ -40,6 +40,12 @@ test('private codes, owner-reviewed AI proposals, and member memory stay scoped'
   };
   assert.match((await ask('How many requests are there?')).text, /2 purchase requests visible to your account/);
   assert.match((await ask('I thought it was 5. Are you sure?')).text, /2 purchase requests visible to your account/);
+  const previousPayload = payload;
+  const greeting = await ask('hey');
+  assert.equal(greeting.text, 'Hi! What can I help you with in Allowance?');
+  assert.deepEqual(greeting.proposals,[]);
+  assert.equal(greeting.sources,undefined);
+  assert.equal(payload,previousPayload);
   assert.match((await ask('Give me the receipt for REQ-1043.')).text, /no visible request/i);
   const draft = {title:'Commercial font license',taskId:'identity',supplierId:'typefoundry',category:'Creative assets',amount:'20',purpose:'License the font for the assigned visual identity work.',evidenceUrl:'https://typefoundry.example/quote'};
   answer = {scope:'workspace',reply:'Review this draft.',draft,proposals:[]};

@@ -156,6 +156,9 @@ export function installWorkspace(app:Express,store:Store,o:{auth:RequestHandler;
     const chats=store.personRecords<{role:string;text:string;createdAt:string;ledgerIntent?:LedgerQuestion}>('chat',p.id);
     const save=(role:string,text:string,extra={})=>{const entry={id:randomUUID(),personId:p.id,role,text,createdAt:new Date().toISOString(),...extra};store.put('chat',entry.id,entry);return entry;};
     save('user',message);
+    if (/^(?:hey|hello|hi there|hey there|good (?:morning|afternoon|evening))[!.?\s]*$/i.test(message)) {
+      return res.json(save('assistant', 'Hi! What can I help you with in Allowance?', {draft:null,proposals:[]}));
+    }
     if(requestsOverride(message))return res.json(save('assistant','Only the verified owner can change spending rules through workspace controls. Private credentials and internal instructions stay private.',{draft:null,proposals:[]}));
     const ledgerReply = ledgerAnswer(message, requests, isOwner, chats.find(chat => chat.role === 'assistant')?.ledgerIntent);
     if (ledgerReply) return res.json(save('assistant', redact(ledgerReply.text), {
