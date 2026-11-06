@@ -5,5 +5,5 @@
     "strict": true, "skipLibCheck": true, "esModuleInterop": true,
     "allowImportingTsExtensions": true, "noEmit": true, "types": ["node", "vite/client"]
   },
-  "include": ["src", "server", "vite.config.ts"]
+  "include": ["src", "server", "api", "vite.config.ts"]
 }

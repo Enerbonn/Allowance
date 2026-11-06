@@ -1,28 +1,46 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { randomUUID } from 'node:crypto';
 import { Store } from './store.ts';
-import { categories, requestSchema, policySchema, units, offlineReview, validateReview, money, type Person, type Policy, type SpendRequest, type Task } from './domain.ts';
+import { categories, emailSchema, requestSchema, policySchema, units, offlineReview, validateReview, money, type Person, type Policy, type SpendRequest, type Task } from './domain.ts';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { resolve } from 'node:path';
+import { dataDirectory } from './protected-storage.ts';
 import { z } from 'zod';
-import { installWorkspace, publicMember } from './workspace.ts';
+import { installWorkspace, publicMember, assistantMember } from './workspace.ts';
+import { redact, requestsOverride, reviewInstructions } from './assistant-safety.ts';
 import { createAiClient } from './ai.ts';
 import {installTestnet} from './testnet.ts';
 
 export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?: string } = {}) {
   const app = express();
   app.disable('x-powered-by');
+  const publicOrigin = process.env.ALLOWANCE_PUBLIC_ORIGIN;
+  const allowedOrigins = publicOrigin ? [publicOrigin] : ['http://localhost:4310', 'http://127.0.0.1:4310'];
+  const proxyToken = Buffer.from(process.env.ALLOWANCE_PROXY_TOKEN || '');
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'same-origin');
     res.setHeader('X-Frame-Options', 'DENY'); res.setHeader('Cache-Control', 'no-store');
-    if (req.path.startsWith('/api') && !['localhost', '127.0.0.1'].includes(req.hostname)) return res.status(403).json({ error: 'This prototype accepts loopback access only.' });
-    const origin = req.get('origin');
-    if (req.path.startsWith('/api') && origin && !['http://localhost:4310', 'http://127.0.0.1:4310'].includes(origin)) return res.status(403).json({ error: 'Origin not allowed.' });
-    if (req.path.startsWith('/api') && !['GET', 'HEAD'].includes(req.method) && req.get('x-allowance-client') !== 'local-prototype') return res.status(403).json({ error: 'Use the local application to make changes.' });
+    if (req.path.startsWith('/api')) {
+      const isHealth = req.path === '/api/health' && req.method === 'GET';
+      if (publicOrigin && !isHealth) {
+        const supplied = Buffer.from(req.get('x-allowance-proxy') || '');
+        if (proxyToken.length < 24 || supplied.length !== proxyToken.length || !timingSafeEqual(supplied, proxyToken)) {
+          return res.status(403).json({ error: 'Use the Allowance website to access this workspace.' });
+        }
+      } else if (!publicOrigin && !['localhost', '127.0.0.1'].includes(req.hostname)) {
+        return res.status(403).json({ error: 'This workspace accepts loopback access only.' });
+      }
+      const origin = req.get('origin');
+      if (origin && !allowedOrigins.includes(origin)) return res.status(403).json({ error: 'Origin not allowed.' });
+      if (!['GET', 'HEAD'].includes(req.method) && req.get('x-allowance-client') !== 'local-prototype') {
+        return res.status(403).json({ error: 'Use the Allowance application to make changes.' });
+      }
+    }
     next();
   });
   app.use(express.json({ limit: '1500kb' }));
-  const person = (req: Request): Person | undefined => { const c = req.headers.cookie?.split(';').map(v => v.trim()).find(v => v.startsWith('allowance_session=')); return c ? store.personForSession(c.slice('allowance_session='.length)) : undefined; };
+  const person = (req: Request): Person | undefined => { const c = req.headers.cookie?.split(';').map(v => v.trim()).find(v => v.startsWith('allowance_session=')); const account = c ? store.personForSession(c.slice('allowance_session='.length)) : undefined; return account?.email ? account : undefined; };
   const auth = (req: Request, res: Response, next: NextFunction) => { const p = person(req); if (!p?.active) return res.status(401).json({ error: 'Sign in to continue.' }); res.locals.person = p; next(); };
   const owner = (_req: Request, res: Response, next: NextFunction) => res.locals.person.role === 'owner' ? next() : res.status(403).json({ error: 'Only the owner can do this.' });
   const visible = (res: Response, r: SpendRequest) => res.locals.person.role === 'owner' || r.requesterId === res.locals.person.id;
@@ -36,10 +54,14 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
   };
   async function review(r: SpendRequest) {
     try {
-      const raw = await ai.call({ request: { title: r.title, purpose: r.purpose, amount: money(r.amount), currency: 'XLM', category: r.category, requester: store.get('people',r.requesterId), evidenceSupplied: !!(r.evidenceUrl || r.evidenceId), attachment: r.evidenceId ? 'File retained for human review; contents not inspected by the AI.' : null }, task: store.get('tasks', r.taskId), supplier: store.suppliers().find(s => s.id === r.supplierId), policy: { description: store.policy().description, perRequest: money(store.policy().perRequest), autoLimit: money(store.policy().autoLimit) } });
+      if (requestsOverride(r.title + ' ' + r.purpose)) {
+        store.setReview(r.id, { ...offlineReview(), summary: 'This request asks to bypass the spending rules. The owner must review it.' });
+        return;
+      }
+      const raw = await ai.call({ agentInstructions: reviewInstructions, checks: store.checks(r), request: { title: r.title, purpose: r.purpose, amount: money(r.amount), currency: 'XLM', category: r.category, requester: assistantMember(store, store.get<Person>('people',r.requesterId)!), evidenceSupplied: !!(r.evidenceUrl || r.evidenceId), attachment: r.evidenceId ? 'File retained for human review; contents not inspected by the AI.' : null }, task: store.get('tasks', r.taskId), supplier: store.suppliers().find(s => s.id === r.supplierId), policy: { description: store.policy().description, perRequest: money(store.policy().perRequest), autoLimit: money(store.policy().autoLimit) } });
       const result = validateReview(raw, ai.provider ?? undefined);
       aiConnected(result.model);
-      store.setReview(r.id, result);
+      store.setReview(r.id, { ...result, summary: redact(result.summary), reasoning: result.reasoning.map(redact), missingInformation: result.missingInformation.map(redact) });
     } catch (error) {
       aiFailed(error);
       store.setReview(r.id, offlineReview());
@@ -48,16 +70,16 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
   installWorkspace(app, store, { auth, owner, sessionPerson: person, callAI: ai.call, connected: aiConnected, failed: aiFailed });
   installTestnet(app,store,auth,owner);
   app.get('/api/health', (_req, res) => res.json({ ok: true, app: 'Allowance', paymentMode: 'simulated' }));
-  app.delete('/api/session', auth, (req, res) => { const p = req.headers.cookie?.match(/allowance_session=([^;]+)/)?.[1]; if (p) store.db.prepare('DELETE FROM sessions WHERE token=?').run(p); res.clearCookie('allowance_session'); res.json({ ok: true }); });
+  app.delete('/api/session', auth, (req, res) => { const p = req.headers.cookie?.match(/allowance_session=([^;]+)/)?.[1]; if (p) store.db.prepare('DELETE FROM sessions WHERE token=?').run(p); res.clearCookie('allowance_session', { httpOnly:true, secure:!!publicOrigin, sameSite:'strict' }); res.json({ ok: true }); });
   app.post('/api/evidence', auth, (req, res) => {
     const v = z.object({ name: z.string().min(1).max(120), mime: z.enum(['image/png', 'image/jpeg', 'application/pdf']), data: z.string().max(1400000) }).parse(req.body);
     const bytes = Buffer.from(v.data, 'base64'); if (!bytes.length || bytes.length > 1000000) return res.status(400).json({ error: 'Use a PNG, JPEG, or PDF under 1 MB.' });
     const magic = bytes.subarray(0, 4).toString('hex'); if ((v.mime === 'image/png' && magic !== '89504e47') || (v.mime === 'image/jpeg' && !magic.startsWith('ffd8ff')) || (v.mime === 'application/pdf' && bytes.subarray(0, 5).toString() !== '%PDF-')) return res.status(400).json({ error: 'The file contents do not match its type.' });
-    const id = randomUUID(); mkdirSync('.local/evidence', { recursive: true }); writeFileSync(`.local/evidence/${id}.bin`, bytes, { mode: 0o600 });
+    const id = randomUUID(); mkdirSync(resolve(dataDirectory(), 'evidence'), { recursive: true }); writeFileSync(resolve(dataDirectory(), 'evidence', id+'.bin'), bytes, { mode: 0o600 });
     const record = { id, name: v.name.replace(/[^a-zA-Z0-9 ._-]/g, '_'), mime: v.mime, size: bytes.length, personId: res.locals.person.id, sha256: createHash('sha256').update(bytes).digest('hex') };
     store.put('evidence', id, record); res.json(record);
   });
-  app.get('/api/evidence/:id', auth, (req, res) => { const record = store.get<any>('evidence', String(req.params.id)); if (!record || (res.locals.person.role !== 'owner' && record.personId !== res.locals.person.id)) return res.status(404).json({ error: 'Evidence not found.' }); res.setHeader('content-type', record.mime); res.setHeader('content-disposition', `attachment; filename="${record.name}"`); res.send(readFileSync(`.local/evidence/${record.id}.bin`)); });
+  app.get('/api/evidence/:id', auth, (req, res) => { const record = store.get<any>('evidence', String(req.params.id)); if (!record || (res.locals.person.role !== 'owner' && record.personId !== res.locals.person.id)) return res.status(404).json({ error: 'Evidence not found.' }); res.setHeader('content-type', record.mime); res.setHeader('content-disposition', `attachment; filename="${record.name}"`); res.send(readFileSync(resolve(dataDirectory(), 'evidence', record.id+'.bin'))); });
   app.get('/api/bootstrap', auth, (_req, res) => {
     const p = res.locals.person as Person; const requests = store.requests().filter(r => p.role === 'owner' || r.requesterId === p.id);
     const tasks = store.tasks().filter(t => p.role === 'owner' || t.assigneeId === p.id);
@@ -69,7 +91,7 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
     const task = store.get<Task>('tasks', input.taskId); if (!task || task.assigneeId !== p.id) return res.status(403).json({ error: 'Choose a task assigned to your member account.' });
     if (input.evidenceId && store.get<any>('evidence', input.evidenceId)?.personId !== p.id) return res.status(400).json({ error: 'Attach evidence uploaded by your own identity.' });
     const now = new Date().toISOString();
-    const r: SpendRequest = { ...input, id: `REQ-${randomUUID().slice(0, 8).toUpperCase()}`, projectId: task.projectId, requesterId: p.id, amount: units(input.amount), status: 'analyzing', createdAt: now, updatedAt: now, policyVersion: store.policy().version, profileVersion:p.profileVersion||0, reasons: [], ai: null, mode: input.mode, receipt: null, comment: '' };
+    const r: SpendRequest = { ...input, title: redact(input.title), purpose: redact(input.purpose), id: `REQ-${randomUUID().slice(0, 8).toUpperCase()}`, projectId: task.projectId, requesterId: p.id, amount: units(input.amount), status: 'analyzing', createdAt: now, updatedAt: now, policyVersion: store.policy().version, profileVersion:p.profileVersion||0, reasons: [], ai: null, mode: input.mode, receipt: null, comment: '' };
     const created = store.create(r); if (!created.duplicate) void review(r);
     res.status(created.duplicate ? 200 : 202).json(created);
   });
@@ -91,7 +113,7 @@ export function createApp(store: Store, options: { aiEndpoint?: string; aiToken?
   app.post('/api/team/:id/toggle', auth, owner, (req, res) => { const p = store.get<Person>('people', String(req.params.id)); if (!p || p.role === 'owner') return res.status(400).json({ error: 'Choose a team member.' }); p.active = !p.active; store.put('people', p.id, p); store.event(p.active ? 'Member access restored' : 'Member access paused', p.name, res.locals.person.name, null, 'policy'); res.json(p); });
   app.post('/api/setup/:kind', auth, owner, (req, res) => {
     const kind = String(req.params.kind), id = randomUUID(); let record: unknown;
-    if (kind === 'people') { const v = z.object({ name: z.string().trim().min(2).max(80), title: z.string().trim().min(2).max(100) }).parse(req.body); record = { ...v, id, role: 'member', initials: v.name.split(/\s+/).map(s => s[0]).slice(0, 2).join('').toUpperCase(), active: true }; }
+    if (kind === 'people') { const v = z.object({ name: z.string().trim().min(2).max(80), title: z.string().trim().min(2).max(100), email: emailSchema }).parse(req.body); if(store.people().some(p=>p.email===v.email))return res.status(409).json({error:'That email is already assigned in this workspace.'}); record = { ...v, id, role: 'member', initials: v.name.split(/\s+/).map(s => s[0]).slice(0, 2).join('').toUpperCase(), active: true }; }
     else if (kind === 'projects') { const v = z.object({ name: z.string().trim().min(3).max(100), description: z.string().trim().min(5).max(600), budget: z.string() }).parse(req.body); record = { ...v, id, budget: units(v.budget), active: true }; }
     else if (kind === 'tasks') { const v = z.object({ title: z.string().trim().min(3).max(120), description: z.string().trim().min(10).max(1200), projectId: z.string(), assigneeId: z.string() }).parse(req.body); if (!store.projects().some(p => p.id === v.projectId && p.active) || !store.people().some(p => p.id === v.assigneeId && p.active && p.role === 'member')) return res.status(400).json({ error: 'Choose an active project and team member.' }); record = { ...v, id, active: true }; }
     else if (kind === 'suppliers') { const v = z.object({ name: z.string().trim().min(2).max(100), domain: z.string().trim().regex(/^[a-z0-9.-]+\.[a-z]{2,}$/i), category: z.enum(categories), approved: z.boolean() }).parse(req.body); record = { ...v, id, destination: 'Demo merchant record; wallet not connected' }; }

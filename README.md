@@ -1,6 +1,6 @@
 # Allowance
 
-An owner sets a budget, assigns work and defines which expenses are eligible. A team member signs in with an owner-issued code, describes a purchase and submits it for review. AI helps with the explanation and draft. The backend enforces identity, assignments, suppliers and budgets and records the decision.
+An owner sets a budget, assigns work and defines which expenses are eligible. A team member signs in with their email and an owner-issued code, describes a purchase and submits it for review. AI helps with the explanation and draft. The backend enforces identity, assignments, suppliers and budgets and records the decision.
 
 **Current demo** supports owner and member accounts, rules, requests, manual or AI-assisted review and local payment simulation. The Stellar Testnet integration has passed read-only contract checks. A complete authorization and merchant claim still needs an end-to-end test.
 
@@ -29,10 +29,10 @@ Open [Allowance on port 4310](http://127.0.0.1:4310/). On Windows, after the fir
 
 ### Try both roles
 
-1. Choose **Business owner**. At **Set up owner access**, enter your name and create a private code of at least eight characters. Choose **Business owner** and enter your code when you return. A fresh workspace starts with no sample records.
-2. In **Team**, select **Add member**. Use **Ask AI** on that profile if you want help drafting responsibilities and spending limits. Review suggestions before applying them.
+1. Choose **Business owner**. At **Create your owner account**, enter your name, email, and a private code of at least eight characters. An existing owner without an email can add it using their current code. A fresh workspace starts with no sample records.
+2. In **Team**, select **Add member** and enter the email they gave you. Use **Draft responsibilities** on that profile if you want help drafting responsibilities and spending limits. Review suggestions before applying them.
 3. In **Projects**, create a project with a budget, then assign a task to the member. In **Spending policy**, add an approved supplier and review the spending limits and evidence rules.
-4. Back in **Team**, select **Issue code** for the member and save the member ID and private code shown once. Open your account menu and sign out, then choose **Team member** and sign in with their ID and code.
+4. Back in **Team**, select **Issue code** for the member and share the sign-in email and private code shown once. Open your account menu and sign out, then choose **Team member** and sign in with their email and code.
 5. Make a request for the assigned task and approved supplier. Choose **Local simulation**. Return as owner, review the checks, and approve an eligible request with a decision note. Open the simulated receipt and check the remaining project balance.
 
 For a prefilled demo, stop the current server and start a separate database from PowerShell. These settings apply to that terminal:
@@ -46,6 +46,10 @@ npm start
 Close that terminal when you finish the sample demo. Start from a new terminal or use `START.cmd` to return to the default workspace.
 
 Member budgets are lifetime totals across projects. Zero blocks spending while keeping chat access. Clearing the member limit returns to the project limits. Without AI, the request form still works and the owner can review eligible requests manually.
+
+## Deploy the demo
+
+Use Vercel for the frontend and Render for the API and its persistent disk. Follow the [deployment guide](docs/DEPLOY.md).
 
 ## Tech stack and code map
 

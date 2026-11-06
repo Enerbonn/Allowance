@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "installCommand": "npm ci",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/gateway.ts": { "maxDuration": 120 }
+  },
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/gateway?route=:path*" }
+  ]
+}

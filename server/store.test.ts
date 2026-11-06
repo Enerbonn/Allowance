@@ -64,3 +64,17 @@ test('a complete model approval can trigger exactly one permitted simulated paym
   s.setReview(r.id, { recommendation: 'approve', summary: 'Repeated result.', reasoning: [], missingInformation: [], provider: 'Relmio via local n8n' });
   assert.equal(s.committed('launch'), units('48')); s.close();
 });
+
+test('supplier category and quote host constrain automatic payments', () => {
+  const store = new Store(':memory:');
+  const approval = { recommendation: 'approve', summary: 'Approved', reasoning: [], missingInformation: [], provider: 'Relmio via local n8n' } as const;
+  const reviewed = { ...approval, reasoning: [], missingInformation: [] };
+  const misclassified = { ...candidate(store), category: 'Software', status: 'analyzing' } as SpendRequest;
+  const mismatchedQuote = { ...candidate(store), evidenceUrl: 'https://framekit.example.unrelated.example/quote', status: 'analyzing' } as SpendRequest;
+  store.create(misclassified);
+  store.create(mismatchedQuote);
+  assert.equal(store.setReview(misclassified.id, reviewed).status, 'blocked');
+  assert.equal(store.setReview(mismatchedQuote.id, reviewed).status, 'needs_review');
+  assert.equal(store.committed('launch'), units('28'));
+  store.close();
+});

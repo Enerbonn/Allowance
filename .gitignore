@@ -10,3 +10,5 @@ dist/
 *.pem
 *.key
 /scripts/setup-n8n.mjs
+
+.vercel/

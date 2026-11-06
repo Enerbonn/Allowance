@@ -4,26 +4,23 @@ import {Keypair,Networks,Asset,TransactionBuilder,xdr} from '@stellar/stellar-sd
 import {Velo} from '@carts1024/velo-sdk';
 import {createHash,randomUUID} from 'node:crypto';
 import {existsSync,readFileSync,writeFileSync,mkdirSync} from 'node:fs';
-import {execFileSync} from 'node:child_process';
 import {resolve} from 'node:path';
 import {Store} from './store.ts';
+import {dataDirectory, protect, protectedStorageReady, unprotect} from './protected-storage.ts';
 import {units,type Supplier} from './domain.ts';
 
 export const EVENT_CONTRACTS={deviceRegistry:'CB4DPMGOA374JIB2ZVD4AHW5GJKQUYNOFGRYNOJ75EFH2KCJSMHOWIRA',agentRegistry:'CBTDMJVCFQDIVWZBKAKZ2FQ3UEJNAAUFYCTJ3E4ON2MYXPLPSIXQ25JZ',paymentEscrow:'CA5S4S7QGHJHJWVJBYL3CXZXZTNGKXMNZVDAEQNN7NUXFP4D7BYK7HIX'};
 const network={...TESTNET,contracts:EVENT_CONTRACTS};
 const asset=Asset.native().contractId(Networks.TESTNET);
-const projectFile=resolve('.local/testnet-project.json');
 function localProject(): { owner: string; projectId: string } {
+ const projectFile=resolve(dataDirectory(),'testnet-project.json');
  if(!existsSync(projectFile))return {owner:'',projectId:''};
  const value=JSON.parse(readFileSync(projectFile,'utf8'));
  if(typeof value.owner!=='string'||typeof value.projectId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(value.projectId))throw new Error('Set a valid owner public address and Velo project ID in the local Testnet configuration.');
  Keypair.fromPublicKey(value.owner);
  return {owner:value.owner,projectId:value.projectId};
 }
-// Windows DPAPI keeps these local development keys bound to this Windows user.
-function protect(value:string){return execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',"$s=[Console]::In.ReadToEnd();ConvertFrom-SecureString (ConvertTo-SecureString $s -AsPlainText -Force)"],{input:value,encoding:'utf8',windowsHide:true}).trim();}
-function unprotect(path:string){const encoded=readFileSync(path,'utf8');return execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',"$s=ConvertTo-SecureString ([Console]::In.ReadToEnd());$p=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($s);try{[Console]::Write([Runtime.InteropServices.Marshal]::PtrToStringBSTR($p))}finally{[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($p)}"],{input:encoded,encoding:'utf8',windowsHide:true}).trim();}
-function getKey(name:string){const path=resolve('.local',name+'.dpapi');if(!existsSync(path))throw new Error('Initialize the Testnet demo accounts first.');return Keypair.fromSecret(unprotect(path));}
+function getKey(name:string){const path=resolve(dataDirectory(),name+'.dpapi');if(!existsSync(path))throw new Error('Initialize the Testnet demo accounts first.');return Keypair.fromSecret(unprotect(path));}
 export function validateOwnerSetupSignature(signed:string,expectedHash:string,owner:string){
  if(signed.length>60000)throw new Error('Invalid signed transaction.');const tx=TransactionBuilder.fromXDR(signed,Networks.TESTNET);
  if(!('source' in tx)||tx.source!==owner||tx.hash().toString('hex')!==expectedHash||!tx.signatures.some(s=>Keypair.fromPublicKey(owner).verify(tx.hash(),s.signature())))throw new Error('The signed transaction does not match the prepared owner operation.');
@@ -53,14 +50,14 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
  }
  function gasPath(active: Project) {
   const scope = createHash('sha256').update(`${active.owner}:${active.projectId}`).digest('hex');
-  return resolve('.local',`velo-gas-${scope}.dpapi`);
+  return resolve(dataDirectory(),`velo-gas-${scope}.dpapi`);
  }
  function availableGasPath(active: Project) {
   if (!active.owner || !active.projectId) return null;
   const scoped = gasPath(active);
   if (existsSync(scoped)) return scoped;
   const previous = localProject();
-  const original = resolve('.local/velo-gas.dpapi');
+  const original = resolve(dataDirectory(),'velo-gas.dpapi');
   return active.owner===previous.owner && active.projectId===previous.projectId && existsSync(original) ? original : null;
  }
  function gas(){
@@ -111,17 +108,17 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   assertIdle();
   const active=project();
   if(!active.owner||!active.projectId||req.body.address!==active.owner||req.body.projectId!==active.projectId)return res.status(409).json({error:'Reload the active wallet and Velo project before saving its Gas key.'});
-  if(process.platform!=='win32')throw new Error('Protected Testnet key storage is available on Windows.');
+  if(!protectedStorageReady())throw new Error('Protected storage must be configured before saving a Testnet key.');
   const key=String(req.body.key||'').trim();
   if(!/^tg_test_[a-f0-9]{32}$/.test(key))return res.status(400).json({error:'Enter a scoped Velo Gas Station Testnet key.'});
-  mkdirSync('.local',{recursive:true});
+  mkdirSync(dataDirectory(),{recursive:true});
   writeFileSync(gasPath(active),protect(key),{mode:0o600});
   res.json(safeStatus());
  });
  app.post('/api/testnet/initialize',auth,owner,exclusive(async(_req,res)=>{
-  if(process.platform!=='win32')throw new Error('This local prototype uses Windows-protected development keys.');
-  const c=config();if(!c.owner)throw new Error('Connect a Stellar Testnet owner wallet first.');mkdirSync('.local',{recursive:true});
-  for(const role of ['agent','merchant'] as const){const name=keyName(c,role);const path=resolve('.local',name+'.dpapi');if(!existsSync(path))writeFileSync(path,protect(Keypair.random().secret()),{mode:0o600});c[role]=getKey(name).publicKey();}
+  if(!protectedStorageReady())throw new Error('Protected storage must be configured before creating demo accounts.');
+  const c=config();if(!c.owner)throw new Error('Connect a Stellar Testnet owner wallet first.');mkdirSync(dataDirectory(),{recursive:true});
+  for(const role of ['agent','merchant'] as const){const name=keyName(c,role);const path=resolve(dataDirectory(),name+'.dpapi');if(!existsSync(path))writeFileSync(path,protect(Keypair.random().secret()),{mode:0o600});c[role]=getKey(name).publicKey();}
   store.put('testnet-wallet',c.owner,c);
   for(const role of ['agent','merchant'] as const){const response=await fetch('https://friendbot.stellar.org/?addr='+encodeURIComponent(c[role]!),{signal:AbortSignal.timeout(30000)});if(!response.ok&&response.status!==400)throw new Error('The Testnet faucet is unavailable. Public account details were saved; retry later.');}
   store.event('Testnet demo accounts initialized','Dedicated local agent and demo merchant. No real funds.',res.locals.person.name,null,'system');res.json(safeStatus());

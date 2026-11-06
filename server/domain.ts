@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export const emailSchema = z.string().trim().max(254).email().transform(email => email.toLowerCase());
+
 export const SCALE = 10_000_000;
 export const money = (units: number) => (units / SCALE).toFixed(7).replace(/0+$/, '').replace(/\.$/, '');
 export function units(value: string): number {
@@ -24,7 +26,7 @@ export const policySchema = z.object({
   autoPay: z.boolean(), paused: z.boolean(), description: z.string().max(4000),
 });
 export type Policy = { id: string; version: number; perRequest: number; autoLimit: number; projectLimit: number; allowedCategories: string[]; requireEvidence: boolean; autoPay: boolean; paused: boolean; description: string };
-export type Person = { id: string; name: string; role: 'owner' | 'member'; title: string; initials: string; active: boolean; description?: string; budget?: number; allowedCategories?: string[]; profileVersion?: number };
+export type Person = { id: string; name: string; role: 'owner' | 'member'; title: string; initials: string; active: boolean; email?: string; description?: string; budget?: number; allowedCategories?: string[]; profileVersion?: number };
 export type Project = { id: string; name: string; description: string; budget: number; active: boolean };
 export type Task = { id: string; projectId: string; assigneeId: string; title: string; description: string; active: boolean };
 export type Supplier = { id: string; name: string; category: string; domain: string; approved: boolean; destination: string };
@@ -36,10 +38,11 @@ export type Check = { label: string; pass: boolean; detail: string };
 export function policyChecks(request: SpendRequest, person: Person, task: Task | undefined, supplier: Supplier | undefined, project: Project | undefined, policy: Policy, committed: number): Check[] {
   return [
     { label: 'Team membership', pass: person.active, detail: person.active ? `${person.name} is an active team member.` : 'This member is inactive.' },
-    { label: 'Task assignment', pass: !!task?.active && task.assigneeId === person.id, detail: task?.assigneeId === person.id ? `Assigned to ${task.title}.` : 'The task must be assigned to the requester.' },
+    { label: 'Task assignment', pass: !!task?.active && task.assigneeId === person.id && task.projectId === request.projectId, detail: task?.assigneeId === person.id ? `Assigned to ${task.title}.` : 'The task must be assigned to the requester.' },
     { label: 'Active project', pass: !!project?.active, detail: project?.active ? project.name : 'The project is inactive.' },
     { label: 'Spending enabled', pass: !policy.paused, detail: policy.paused ? 'The owner paused spending.' : 'The owner has enabled spending.' },
     { label: 'Approved supplier', pass: !!supplier?.approved, detail: supplier?.approved ? `${supplier.name} is approved for the demo.` : 'This supplier needs owner verification.' },
+    { label: 'Supplier category', pass: supplier?.category === request.category, detail: 'The purchase category must match the approved supplier.' },
     { label: 'Allowed expense', pass: policy.allowedCategories.includes(request.category), detail: policy.allowedCategories.includes(request.category) ? `${request.category} is permitted.` : `${request.category} is outside the approved policy.` },
     { label: 'Per-request limit', pass: request.amount <= policy.perRequest, detail: `${money(request.amount)} of ${money(policy.perRequest)} XLM allowed.` },
     { label: 'Project allowance', pass: !!project && committed + request.amount <= Math.min(project.budget, policy.projectLimit), detail: project ? `${money(Math.max(0, Math.min(project.budget, policy.projectLimit) - committed))} XLM available before this request.` : 'Project missing.' },
@@ -48,7 +51,7 @@ export function policyChecks(request: SpendRequest, person: Person, task: Task |
 }
 
 export function offlineReview(): Review {
-  return { recommendation: 'review', summary: 'AI review is unavailable. Your request is saved for the owner.', reasoning: ['Budget and access checks still run independently.', 'No AI approval or live payment has been inferred.'], missingInformation: [], provider: 'Owner review required' };
+  return { recommendation: 'review', summary: 'Your request is saved for owner review.', reasoning: ['Budget and access checks still run independently.', 'The request still needs a decision.'], missingInformation: [], provider: 'Owner review required' };
 }
 
 export const RELMIO_PROVIDER = 'Relmio via local n8n';

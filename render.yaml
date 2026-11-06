@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: allowance-api
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    disk:
+      name: allowance-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: ALLOWANCE_PUBLIC_ORIGIN
+        sync: false
+      - key: ALLOWANCE_PROXY_TOKEN
+        sync: false
+      - key: ALLOWANCE_OWNER_SETUP_TOKEN
+        generateValue: true
+      - key: ALLOWANCE_STORAGE_KEY
+        generateValue: true

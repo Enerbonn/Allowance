@@ -65,7 +65,11 @@ export class Store {
     this.saveRequest(r); this.event('Review completed', ai.summary, ai.provider, r.id, 'review');
     const p = this.policy();
     if (r.policyVersion !== p.version || (r.profileVersion!==undefined && r.profileVersion!==(this.get<Person>('people',r.requesterId)?.profileVersion||0))) { r.status = 'needs_review'; r.reasons.push('Policy changed during the review. The owner must review the current rules.'); this.saveRequest(r); return r; }
-    if (r.mode === 'simulated' && r.status === 'needs_review' && [RELMIO_PROVIDER, GEMINI_PROVIDER].includes(ai.provider) && ai.recommendation === 'approve' && !ai.missingInformation.length && p.autoPay && r.amount <= p.autoLimit) return this.pay(id, 'Policy-approved assistant');
+    const supplier = this.get<Supplier>('suppliers', r.supplierId);
+    const quoteHost = URL.canParse(r.evidenceUrl) ? new URL(r.evidenceUrl).hostname.toLowerCase() : '';
+    const supplierHost = supplier?.domain.toLowerCase();
+    const quoteMatches = !p.requireEvidence || Boolean(supplierHost && (quoteHost === supplierHost || quoteHost.endsWith('.' + supplierHost)));
+    if (quoteMatches && r.mode === 'simulated' && r.status === 'needs_review' && [RELMIO_PROVIDER, GEMINI_PROVIDER].includes(ai.provider) && ai.recommendation === 'approve' && !ai.missingInformation.length && p.autoPay && r.amount <= p.autoLimit) return this.pay(id, 'Policy-approved assistant');
     return r;
   }
   pay(id: string, actor: string) {
@@ -101,9 +105,9 @@ export class Store {
 
   seed() {
     const people: Person[] = [
-      { id: 'owner', name: 'Alex Morgan', role: 'owner', title: 'Studio owner', initials: 'AM', active: true },
-      { id: 'maya', name: 'Maya Chen', role: 'member', title: 'Brand designer', initials: 'MC', active: true },
-      { id: 'leo', name: 'Leo Santos', role: 'member', title: 'Video editor', initials: 'LS', active: true },
+      { id: 'owner', name: 'Alex Morgan', email: 'owner@allowance.example', role: 'owner', title: 'Studio owner', initials: 'AM', active: true },
+      { id: 'maya', name: 'Maya Chen', email: 'maya@allowance.example', role: 'member', title: 'Brand designer', initials: 'MC', active: true },
+      { id: 'leo', name: 'Leo Santos', email: 'leo@allowance.example', role: 'member', title: 'Video editor', initials: 'LS', active: true },
     ]; people.forEach(p => this.put('people', p.id, p));
     const projects: Project[] = [
       { id: 'launch', name: 'Northstar brand launch', description: 'Identity, launch assets, and a story worth sharing.', budget: 500 * SCALE, active: true },
