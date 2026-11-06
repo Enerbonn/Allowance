@@ -57,7 +57,7 @@ function startupFailure(error: unknown, phase: 'connect' | 'initialize' | 'resto
     return 'Postgres rejected the login. Check the database password and copy the full Session pooler URI.';
   }
   if (/CERT|TLS|SSL/.test(code) || /certificate/i.test(message)) {
-    return 'TLS certificate verification failed. Check the Supabase endpoint and trusted certificates.';
+    return 'TLS certificate verification failed. Add the CA from Supabase Database Settings to SUPABASE_CA_CERT on Render and check the pooler hostname.';
   }
   if (phase === 'restore') {
     return 'Stored data could not be restored. Check that ALLOWANCE_STORAGE_KEY matches the key used to encrypt it.';
@@ -77,9 +77,13 @@ export async function openHostedPersistence(connection: string, baseDirectory: s
   catch { throw new Error('Use a valid PostgreSQL connection string.'); }
   if (!['postgres:', 'postgresql:'].includes(url.protocol)) throw new Error('Use a PostgreSQL connection string.');
   url.search = '';
+  const ca = process.env.SUPABASE_CA_CERT?.replace(/\\n/g, '\n').trim();
+  if (!allowTestConnection && ca && !ca.startsWith('-----BEGIN CERTIFICATE-----')) {
+    throw new Error('SUPABASE_CA_CERT must contain the PEM certificate from Supabase Database Settings.');
+  }
   const pool = new pg.Pool({
     connectionString: url.toString(),
-    ssl: allowTestConnection ? false : { rejectUnauthorized: true },
+    ssl: allowTestConnection ? false : { rejectUnauthorized: true, ...(ca ? { ca } : {}) },
     max: 2,
     connectionTimeoutMillis: 10_000,
     statement_timeout: 20_000,
