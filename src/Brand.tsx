@@ -1,9 +1,9 @@
-import logo from './assets/KoaSpend.png';
+import { KoaAvatar } from './KoaAvatar';
 import mascot from './assets/Mascot2.png';
 
 export function Brand() {
   return <div className="brand koaspend-brand">
-    <img src={logo} alt="" width={44} height={44}/>
+    <KoaAvatar size={48}/>
     <strong>KoaSpend</strong>
   </div>;
 }
