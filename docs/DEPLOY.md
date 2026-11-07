@@ -23,7 +23,7 @@ Vercel serves the browser app and forwards its API calls to Render. Render runs 
    | ALLOWANCE_PROXY_TOKEN | The random token from your clipboard. Paste the same value in Vercel later |
 
    Render generates ALLOWANCE_OWNER_SETUP_TOKEN and ALLOWANCE_STORAGE_KEY. Keep both in Render. The setup token is used by the legacy setup API. The owner signup form uses a name, email and password. The storage key protects Testnet agent, demo merchant and Gas credentials on disk. Keep an encrypted backup of the disk and store the encryption key separately.
-3. If you want the assistant online, set GEMINI_API_KEY in Render. A Relmio and n8n instance on your laptop is a separate local setup. A hosted n8n workflow is optional and needs an HTTPS webhook accessible from Render plus its own ALLOWANCE_N8N_TOKEN. [Assistant setup](AI-SETUP.md)
+3. Set GEMINI_API_KEY in Render to enable the assistant online. [Assistant setup](AI-SETUP.md)
 4. Wait until Render marks the service live. Open the service's /api/health endpoint and look for ok: true.
 
 ### If you created a Web Service manually

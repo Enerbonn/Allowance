@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { GEMINI_PROVIDER, RELMIO_PROVIDER, money, policyChecks, SCALE, type Policy, type Person, type Project, type Task, type Supplier, type SpendRequest, type Event, type Review } from './domain.ts';
+import { GEMINI_PROVIDER, money, policyChecks, SCALE, type Policy, type Person, type Project, type Task, type Supplier, type SpendRequest, type Event, type Review } from './domain.ts';
 
 export function manilaWeek(now = new Date()) {
   const offset = 8 * 3600_000;
@@ -123,7 +123,7 @@ export class Store {
       (r.profileVersion === undefined || r.profileVersion === (this.get<Person>('people', r.requesterId)?.profileVersion || 0));
   }
   private trustedAssessment(r: SpendRequest) {
-    return !!r.ai && [RELMIO_PROVIDER, GEMINI_PROVIDER].includes(r.ai.provider) &&
+    return !!r.ai && r.ai.provider === GEMINI_PROVIDER &&
       !r.ai.missingInformation.length;
   }
   canAutoApprove(r: SpendRequest) {

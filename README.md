@@ -23,8 +23,7 @@ Open [Allowance on port 4310](http://127.0.0.1:4310/). On Windows, after the fir
 | I want to… | What I need |
 | --- | --- |
 | Try the owner and member workflow | **Start here.** Run the commands above, then follow the demo below. No API key, Docker, or wallet needed. |
-| Chat with the assistant | Create a Gemini API key, add it to `.env.local`, restart and test the connection. [Gemini quick setup](docs/AI-SETUP.md#option-1-use-gemini-directly) |
-| Reproduce the original ChatGPT workflow | Use your own n8n instance and Relmio connection. [Relmio and n8n setup](docs/AI-SETUP.md#option-2-use-chatgpt-through-relmio-and-n8n) |
+| Chat with the assistant | Create a Gemini API key, add it to `.env.local`, restart and test the connection. [Gemini quick setup](docs/AI-SETUP.md#use-gemini-directly) |
 | Connect a wallet and try Stellar Testnet | Create and fund a test wallet, connect it in Allowance and link a registered Velo project when ready to pay. [Wallet and Testnet tutorial](docs/HACKATHON.md#wallet-and-testnet-tutorial-on-windows) |
 
 ### Try both roles
@@ -57,6 +56,15 @@ In **Connections**, select the owner wallet and initialize the managed agent. Re
 
 Use Vercel for the frontend and Render for the API and its persistent disk. Follow the [deployment guide](docs/DEPLOY.md).
 
+## Repository layout and checks
+
+- `src/` contains the browser interface; `server/` contains the API, business rules, AI instructions, persistence, and automated tests.
+- `api/` forwards Vercel requests to the hosted backend. Deployment files at the root are required by Vercel and Render.
+- `docs/` contains setup, deployment, and hackathon instructions.
+- `.local/`, `node_modules/`, build output, logs, and credentials are excluded from Git. They are not part of the GitHub payload.
+
+Run `npm run build` and `npm test` before pushing. The maintained tests in `server/*.test.ts` replace the older one-off preview and verification scripts. No live keys or wallet signatures are needed for these automated checks.
+
 ## Tech stack and code map
 
 | Layer | Stack | Entry point |
@@ -65,7 +73,7 @@ Use Vercel for the frontend and Render for the API and its persistent disk. Foll
 | Server | Node.js, Express, TypeScript, Zod | [server/index.ts](server/index.ts), [server/app.ts](server/app.ts) |
 | Access and AI context | scrypt, server sessions, Markdown instructions | [server/workspace.ts](server/workspace.ts), [server/agent-instructions.md](server/agent-instructions.md) |
 | Persistence and checks | SQLite, SQL, integer XLM amounts | [server/store.ts](server/store.ts), [server/domain.ts](server/domain.ts) |
-| AI | Gemini API directly, or ChatGPT through n8n and Relmio | [Importable n8n workflow](n8n/allowance-review.json), [AI setup guide](docs/AI-SETUP.md) |
+| AI | Google Gemini API | [AI setup guide](docs/AI-SETUP.md) |
 | Testnet | Stellar Wallets Kit, Stellar SDK, Noir Agent SDK, Velo SDK | [src/Testnet.tsx](src/Testnet.tsx), [server/testnet.ts](server/testnet.ts) |
 
 ```mermaid
@@ -74,12 +82,6 @@ flowchart TD
     B --> A[Express API verifies identity and permissions]
     A <--> S[(Local SQLite)]
     A <-->|Optional AI| G[Gemini API]
-    A -->|Optional original workflow| N[n8n webhook]
-    N --> R[Private Relmio gateway]
-    R --> M[ChatGPT inference]
-    M -. structured reply .-> R
-    R -. JSON .-> N
-    N -. draft or recommendation .-> A
     A --> P{Independent spending checks}
     P -- blocked or unclear --> O[Block or owner review]
     P -- eligible or owner-approved Testnet --> V[Velo Gas sponsorship and submission]
@@ -95,7 +97,7 @@ flowchart TD
 
 ### How a conversation edits one field
 
-Ask the assistant to “Set Maya’s weekly cap to 500 XLM.” The backend sends the authenticated role, permitted records, and exact member IDs to Gemini or the n8n webhook. The model returns a reply plus a proposal such as:
+Ask the assistant to “Set Maya’s weekly cap to 500 XLM.” The backend sends the authenticated role, permitted records, and exact member IDs to Gemini. The model returns a reply plus a proposal such as:
 
 ```json
 {
@@ -118,7 +120,7 @@ Before spending, the backend checks membership, assignment, supplier, category, 
 
 ## AI credentials and APIs
 
-An API lets the backend send a request to an AI service and receive a structured response. Gemini uses your own Google AI Studio API key. The original route sends a webhook to n8n, which calls Relmio’s local API using a bearer from the Relmio setup. Relmio connects to your authorized ChatGPT account. [AI setup guide](docs/AI-SETUP.md) · [Relmio on GitHub](https://github.com/Demonbane18/relmio)
+An API lets the backend send scoped workspace context to Google Gemini and receive a structured response. Set your own Google AI Studio key on the backend. [AI setup guide](docs/AI-SETUP.md)
 
 The project uses these configuration names. Each machine supplies its own values.
 
@@ -126,9 +128,6 @@ The project uses these configuration names. Each machine supplies its own values
 | --- | --- |
 | `GEMINI_API_KEY` | Your Google AI Studio key. Setting it selects Gemini at startup |
 | `GEMINI_MODEL` | Optional model override. Defaults to `gemini-3.1-flash-lite` |
-| `N8N_REVIEW_URL` | n8n production webhook URL. Defaults to `http://127.0.0.1:5679/webhook/allowance-review-v1` |
-| `ALLOWANCE_N8N_TOKEN` | Shared header token for the app-to-n8n webhook. The app can also read its local token file |
-| `RELMIO_BEARER` | Documentation label for your own bearer entered into the n8n OpenAI credential |
 | `VELO_GAS_API_KEY` | Documentation label for the Testnet Gas key entered through `Save-GasKey.ps1` on Windows |
 
 The app saves local records in `.local/allowance.sqlite`. The Git ignore rules cover `.local/`, private configuration, encrypted keys, build output and installed packages. Each clone starts with its own database. Keep the server bound to localhost for this demo.

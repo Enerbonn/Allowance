@@ -5,12 +5,16 @@ import {createApp} from './app.ts';
 import {setAccessCode,verifyAccessCode} from './workspace.ts';
 import {units} from './domain.ts';
 import type {AddressInfo} from 'node:net';
-import express from 'express';
 
 test('private codes, owner-reviewed AI proposals, and member memory stay scoped',async()=>{
  const store=new Store(':memory:');let payload:any;let answer:any={scope:'workspace',reply:'An owner update.',draft:null,proposals:[],model:'test-model'};
- const mock=express();mock.use(express.json());mock.post('/',(req,res)=>{payload=req.body;res.json(typeof answer === 'function' ? answer(payload) : answer);});const upstream=mock.listen(0,'127.0.0.1');await new Promise<void>(r=>upstream.on('listening',r));
- const app=createApp(store,{aiEndpoint:`http://127.0.0.1:${(upstream.address() as AddressInfo).port}/`,aiToken:'synthetic-test-token'}).listen(0,'127.0.0.1');await new Promise<void>(r=>app.on('listening',r));const base=`http://127.0.0.1:${(app.address() as AddressInfo).port}/api`;
+ const geminiFetch: typeof fetch = async (_url, init) => {
+  const body=JSON.parse(init!.body as string);
+  payload={...JSON.parse(body.contents[0].parts[0].text),agentInstructions:body.systemInstruction.parts[0].text};
+  const result=typeof answer==='function'?answer(payload):answer;
+  return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(result)}]}}]});
+ };
+ const app=createApp(store,{geminiApiKey:'synthetic-test-key',geminiFetch}).listen(0,'127.0.0.1');await new Promise<void>(r=>app.on('listening',r));const base=`http://127.0.0.1:${(app.address() as AddressInfo).port}/api`;
  const headers={'content-type':'application/json','x-allowance-client':'local-prototype'};const post=(path:string,body:any,cookie='')=>fetch(base+path,{method:'POST',headers:{...headers,cookie},body:JSON.stringify(body)});
  try{
   assert.equal((await post('/session',{personId:'owner'})).status,401);
@@ -92,7 +96,7 @@ test('private codes, owner-reviewed AI proposals, and member memory stay scoped'
   answer={scope:'workspace',reply:'Save this private preference?',draft:null,proposals:[{type:'memory',targetId:'maya',summary:'Remember a work preference.',fields:{text:'Prefer accessible commercial font licenses.'}}]};const memory=await(await post('/assistant',{message:'Remember my work preference.'},member)).json();assert.equal((await post(`/proposals/${memory.proposals[0].id}/apply`,{},member)).status,200);assert.equal((await(await fetch(base+'/memory',{headers:{cookie:owner}})).json()).length,0);
   const reset=await post('/team/maya/code',{},owner);assert.equal(reset.status,200);assert.equal((await fetch(base+'/bootstrap',{headers:{cookie:member}})).status,401);
   for(let i=0;i<5;i++)assert.equal((await post('/session',{email:'maya@allowance.example',role:'member',code:'wrong-code'})).status,401);assert.equal((await post('/session',{email:'maya@allowance.example',role:'member',code:'wrong-code'})).status,429);
- }finally{await new Promise<void>(r=>app.close(()=>r()));await new Promise<void>(r=>upstream.close(()=>r()));store.close();}
+ }finally{await new Promise<void>(r=>app.close(()=>r()));store.close();}
 });
 
 test('member allowance applies across projects and Testnet cannot use the simulator',()=>{
