@@ -1,0 +1,15 @@
+.koa-avatar {
+  display: inline-block;
+  flex: 0 0 auto;
+  object-fit: contain;
+  vertical-align: middle;
+}
+.chat-avatar:has(.koa-avatar) { background: transparent; }
+.chat-avatar .koa-avatar { width: 36px !important; height: 36px !important; }
+.chat-intro > .koa-avatar { width: 64px !important; height: 64px !important; }
+.team-assist-banner > .koa-avatar { width: 44px !important; height: 44px !important; }
+.project-monogram:has(.koa-avatar) { background: transparent; border: 0; }
+.project-monogram .koa-avatar { width: 36px !important; height: 36px !important; }
+
+.chat-intro > span:has(.koa-avatar) { background: transparent; }
+.chat-intro > span .koa-avatar { width: 64px !important; height: 64px !important; }
