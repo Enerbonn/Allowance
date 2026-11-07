@@ -6,7 +6,6 @@ const paths = {
   Team: '/team',
   'Spending policy': '/spending-policy',
   Activity: '/activity',
-  'Saved notes': '/saved-notes',
   Connections: '/connections',
 } as const;
 

@@ -5,7 +5,7 @@ import './style.css';
 import './responsive-fixes.css';
 import './koaspend.css';
 import { Brand, AuthBrandingPanel } from './Brand';
-import {SignIn,TeamConsole,AgentMemory,ProposalCard} from './Workspace';
+import {SignIn,TeamConsole,ProposalCard} from './Workspace';
 import {TestnetPanel, getTestnetStatus, type TestnetStatus, type PaymentStep} from './Testnet';
 import {OwnerSetup, type SetupAction} from './OwnerSetup';
 import { pagePath, projectRequestsPath, readRoute, requestPath, type Page } from './routes';
@@ -135,7 +135,6 @@ function App() {
     { name: 'Team', icon: Users },
     { name: 'Spending policy', icon: SlidersHorizontal },
     { name: 'Activity', icon: Activity },
-    { name: 'Saved notes', icon: Sparkles },
   ] as const;
   const connectionsNav = { name: 'Connections', icon: Settings } as const;
   const project = data?.projects.find(p => p.id === projectId);
@@ -255,7 +254,6 @@ function App() {
       {page === 'Assistant' && <AssistantPage data={data} title={assistantTitle} onDraft={d => { setDraft(d); setModal('new'); }} refresh={load} openSetup={openSetup} onHelp={() => setModal('help')} onRequest={id => { setSearch(''); setFilter('all'); showRequest(id); }}/> }
       {page === 'Projects' && <><div className="page-heading"><div><h1>Projects and allowances</h1><p>Keep resources connected to the work.</p></div>{owner && <button className="primary-btn" onClick={() => setModal('projects')}><Plus size={16}/>New project</button>}</div><div className="project-grid large">{data.projects.map((p, i) => <ProjectCard key={p.id} p={p} i={i} limit={data.policy.projectLimit} onClick={() => showProject(p.id)}/>)}</div><div className="section-head"><h2>Assigned work</h2>{owner && <button className="secondary-btn" onClick={() => setModal('tasks')}><Plus size={14}/>Assign task</button>}</div><div className="surface-list">{data.tasks.map(t => <div className="task-row" key={t.id}><span className="task-mark"><FolderOpen size={19}/></span><span><strong>{t.title}</strong><p>{t.description}</p><small>{data.projects.find(p => p.id === t.projectId)?.name}</small></span><Avatar person={data.people.find(p => p.id === t.assigneeId)}/></div>)}</div></>}
       {page === 'Team' && <TeamConsole data={data} refresh={load} add={()=>setModal('people')} ask={text=>{sessionStorage.setItem('assistant-prefill',text);navigate('Assistant');}}/>}
-      {page === 'Saved notes' && <AgentMemory owner={!!owner} ask={text=>{sessionStorage.setItem('assistant-prefill',text);navigate('Assistant');}}/>}
       {page === 'Spending policy' && <PolicyPage data={data} busy={busy} addSupplier={() => setModal('suppliers')} approveSupplier={id => run('supplier', () => api('/suppliers/' + encodeURIComponent(id) + '/approve', { method: 'POST' }), 'Supplier approved.')} saveQuoteHosts={(id,hosts)=>run('supplier',()=>api('/suppliers/'+encodeURIComponent(id)+'/quote-websites',{method:'PUT',body:JSON.stringify({hosts})}),'Quote websites saved.')} save={p => run('policy', () => api('/policy', { method: 'PUT', body: JSON.stringify(p) }), 'Spending policy saved. New decisions use these rules.')}/>}
       {page === 'Activity' && <><div className="page-heading"><div><h1>Activity</h1><p>Requests, decisions, and payments in one timeline.</p></div>{owner && <a className="secondary-btn" href="/api/export" download><ArrowDownToLine size={15}/>Export expenses</a>}</div><ActivityList data={data} onSelect={id => { setSearch(''); setFilter('all'); showRequest(id); }}/></>}
       {page === 'Connections' && <><Connections data={data} busy={busy} test={() => run('ai', () => api('/ai/test', { method: 'POST' }), 'Assistant connection verified.')} />{owner&&<TestnetPanel data={data} focus={paymentStep} addSupplier={() => setModal('suppliers')}/>}</>}
