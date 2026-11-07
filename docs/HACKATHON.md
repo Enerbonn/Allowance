@@ -1,24 +1,28 @@
-# Velo x Noir hackathon
+# Hackathon integration and Testnet setup
 
-This mapping uses the organizer’s announcement and contract list supplied in the registration form. Follow the organizer’s current instructions for registration, eligibility and submission. [Event listing](https://luma.com/gjclwpkd)
+The [builder handbook updated Nov 7](https://docs.google.com/document/d/1FQWX8ICFFuuJHF-2JcQBoLOWOj8aXKEZ7rhQvQv5DK0/edit) is the submission reference. It requires an agentic payment through the Noir SDK on its deployed contracts, use of Velo SDK, Testnet only, a public workspace monorepo, a live website, two-minute video, public pitch deck and registered team identities.
 
-| Requirement from the organizer | How Allowance addresses it | Verification |
-| --- | --- | --- |
-| Build an agentic payment | The AI assesses a member’s request and proposes a purchase within owner-defined authority. The backend checks permission and budgets. The owner sets up and authorizes the Testnet agent. Eligible purchases within the configured automatic limit can proceed automatically. | Owner/member conversations and simulation exercised locally. |
-| Use Velo | The backend uses `@carts1024/velo-sdk` to request gas sponsorship and submit the signed Testnet transaction. | Implemented. A successful sponsored payment and claim still need end-to-end verification. |
-| Interact with the specified Noir Testnet contracts | Register owner/device association, authorize a limited agent and use escrow for funding, payment authorization and merchant claim. | All three contract instances were verified present by read-only checks on 2026-11-05. Wallet setup and a complete payment remain pending. |
+## Important contract mismatch
 
-The organizer also directed participants to register their project on Velo and complete the separate registration form in addition to Luma. This repository is the project source. [Velo documentation](https://www.velo-build.dev/docs) · [Noir repository](https://github.com/noirx402/noir)
+The build and recorded demo use these **earlier registration-form** IDs, explicitly configured at [server/testnet.ts:13](../server/testnet.ts#L13):
 
-## Contract IDs used in the code
-
-| Contract | Address supplied in the event form |
+| Contract | Recorded demo / current code |
 | --- | --- |
-| `device_registry` | `CB4DPMGOA374JIB2ZVD4AHW5GJKQUYNOFGRYNOJ75EFH2KCJSMHOWIRA` |
-| `agent_registry` | `CBTDMJVCFQDIVWZBKAKZ2FQ3UEJNAAUFYCTJ3E4ON2MYXPLPSIXQ25JZ` |
-| `payment_escrow` | `CA5S4S7QGHJHJWVJBYL3CXZXZTNGKXMNZVDAEQNN7NUXFP4D7BYK7HIX` |
+| device_registry | `CB4DPMGOA374JIB2ZVD4AHW5GJKQUYNOFGRYNOJ75EFH2KCJSMHOWIRA` |
+| agent_registry | `CBTDMJVCFQDIVWZBKAKZ2FQ3UEJNAAUFYCTJ3E4ON2MYXPLPSIXQ25JZ` |
+| payment_escrow | `CA5S4S7QGHJHJWVJBYL3CXZXZTNGKXMNZVDAEQNN7NUXFP4D7BYK7HIX` |
 
-These override the installed SDK’s bundled defaults. Check the event’s current list before signing a transaction.
+The newer handbook requires:
+
+| Contract | Nov 7 handbook deployment |
+| --- | --- |
+| device_registry | `CAC4KOLHDLDYDWBOKXNKRN5KVHO56PLOIFXDLTBUWGVN6GVDEB7FQHU5` |
+| agent_registry | `CCMZDSPTLX7IIJWCYEUM5DJUHOSOYSTHGK777S2TXZWEMC5ZZGPJ3EBV` |
+| payment_escrow | `CC7EAW5FNJEDBS7THM5IT6XIOHO4AOYMLXT3KSZ3HWUIKEACTW7E5BFS` |
+
+**Do not claim updated-contract compliance from the earlier receipt.** Confirm the applicable IDs with the organizer. Migrating requires checking SDK compatibility, registering/authorizing/funding against the new contracts, updating Velo's allowlist, and obtaining fresh authorization/claim proof. Existing escrow and authority are not transferred by changing an address in source. This documentation pass preserves the working payment configuration.
+
+The root README links the real Noir/Velo code paths, historical proof and limitations. Device registry establishes ownership; agent registry constrains authority; escrow holds funds and records authorization/claim. Velo sponsors/submits the payment and provides recovery status. This build does not use Velo checkout webhooks.
 
 ## Wallet and Testnet tutorial on Windows
 
@@ -34,21 +38,21 @@ The local demo works before wallet setup. Use these steps when you want to try t
    https://friendbot.stellar.org/?addr=YOUR_STELLAR_TESTNET_PUBLIC_ADDRESS
    ```
 
-### 2. Connect your wallet in Allowance
+### 2. Connect your wallet in KoaSpend
 
-1. Open [Allowance](http://127.0.0.1:4310/) in the browser with your wallet, choose **Business owner** and sign in and open **Connections → Connect the payment path → Connect owner wallet**.
-2. Choose your provider from the Stellar Wallets Kit picker and approve the connection in your wallet. Allowance remembers the selected public account. Use **Saved wallet** to switch between previously added accounts. Use **Connect or add wallet** to add another or reconnect the selected account before signing. Each keeps its own Noir setup and Velo project. An unresolved Testnet payment must be reconciled before switching or disconnecting.
+1. Open [KoaSpend](http://127.0.0.1:4310/) in the browser with your wallet, choose **Business owner** and sign in and open **Connections → Connect the payment path → Connect owner wallet**.
+2. Choose your provider from the Stellar Wallets Kit picker and approve the connection in your wallet. KoaSpend remembers the selected public account. Use **Saved wallet** to switch between previously added accounts. Use **Connect or add wallet** to add another or reconnect the selected account before signing. Each keeps its own Noir setup and Velo project. An unresolved Testnet payment must be reconciled before switching or disconnecting.
 3. Click **Initialize demo accounts** and **Inspect contracts**. Then use **Register device**, **Review and sign authorization**, and **Review and sign deposit**, in that order. Review each Testnet signature in your wallet. To change an existing authorization, sign its revocation before signing the replacement. After funding, **Manage Noir escrow** shows the last checked balance and lets you review and sign a withdrawal back to the registered owner wallet.
 
 ### 3. Link Velo and try a payment
 
-1. In [Velo Build](https://www.velo-build.dev/), create a project with the same wallet and select **Register Project On-Chain**. Sign on Stellar Testnet. Copy a Velo project page URL containing `/projects/<projectId>/` and paste it into **Velo project URL or ID** in Allowance. Click **Save project**.
-2. Configure **Gas Station** for that project with a funded Testnet relayer, sponsorship enabled and permissions for the Noir contracts. Create a scoped **Testnet Gas** key, enter it in Allowance’s password field and click **Save Gas key**. Allowance stores it encrypted for your Windows user. [Velo Gas Station guide](https://github.com/Velo-Ecosystem-Collection/Velo/blob/main/docs/velo-gas-station.md)
-3. Choose an approved supplier and select **Use dedicated demo merchant**. Sign in as a member and submit a **Stellar Testnet** request for that supplier and an assigned task. Sign back in as owner to review and authorize it. Check **Connections** for the authorization and merchant-claim hashes.
+1. In [Velo Build](https://www.velo-build.dev/), create a project with the same wallet and select **Register Project On-Chain**. Sign on Stellar Testnet. Copy a Velo project page URL containing `/projects/<projectId>/` and paste it into **Velo project URL or ID** in KoaSpend. Click **Save project**.
+2. Configure **Gas Station** for that project with a funded Testnet relayer, sponsorship enabled and permissions for the Noir contracts. Create a scoped **Testnet Gas** key, enter it in KoaSpend’s password field and click **Save Gas key**. KoaSpend stores it encrypted on the backend. [Velo Gas Station guide](https://github.com/Velo-Ecosystem-Collection/Velo/blob/main/docs/velo-gas-station.md)
+3. Choose an approved supplier and select **Use dedicated demo merchant**. Sign in as a member and submit a **Stellar Testnet** request for that supplier and an assigned task. Eligible requests can proceed automatically when enabled; uncertain requests go to the owner for review. Check **Connections** for the authorization and merchant-claim hashes.
 
 If Velo reports **Account not found**, verify Friendbot funded the same public address and that Testnet is selected. If a contract cannot be verified after a Testnet reset, check the organizer’s current contract list before continuing.
 
-Allowance marks the request paid after the merchant claim is confirmed. The on-chain flow still needs a successful end-to-end test. Finish the Testnet setup before a live payment demo.
+KoaSpend marks the request paid after the merchant claim is confirmed. A recorded successful claim is linked in the root README. Repeat the full flow after any contract migration or Testnet reset.
 
 ## Blockchain tools and source
 

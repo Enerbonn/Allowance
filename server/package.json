@@ -1,0 +1,7 @@
+{
+  "name": "@koaspend/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "KoaSpend server workspace; dependencies are installed at the repository root"
+}

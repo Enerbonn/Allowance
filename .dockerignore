@@ -5,3 +5,6 @@
 !server/**
 !Dockerfile
 !docker-start.sh
+
+!src/
+!src/package.json

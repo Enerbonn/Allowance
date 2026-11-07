@@ -1,5 +1,5 @@
 {
-  "name": "allowance-local-prototype",
+  "name": "koaspend",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -37,5 +37,10 @@
   },
   "engines": {
     "node": "24.x"
-  }
+  },
+  "description": "KoaSpend: policy-guided team budgets and agentic Stellar Testnet payments with Noir and Velo",
+  "workspaces": [
+    "src",
+    "server"
+  ]
 }

@@ -13,3 +13,5 @@ dist/
 .vercel/
 
 /scripts/
+
+!.env.example

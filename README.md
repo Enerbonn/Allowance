@@ -1,137 +1,166 @@
-# Allowance
+# KoaSpend
 
-An owner sets a budget, assigns work and defines which expenses are eligible. A team member signs in with their email and an owner-issued code, describes a purchase and submits it for review. AI helps with the explanation and draft. The backend enforces identity, assignments, suppliers and budgets and records the decision.
+An automated spending desk for managers and their teams: Koa helps set up budgets, prepares member requests, and approves eligible Stellar Testnet payments within the owner's rules.
 
-**Current demo** supports owner and member accounts, rules, requests, assistant decisions and Stellar Testnet payments. A complete Velo-sponsored authorization and merchant claim still needs an end-to-end test.
+**Live website:** https://koaspend-kappa.vercel.app
 
-## Run on your laptop
+**Demo video (2 min):** [Watch KoaSpend demo](https://drive.google.com/file/d/1tlFxvj1F-1QsxQIXswPSQs8vGYS9QWML/view?usp=sharing)
 
-Ask the repository owner for access to this private repo. Install [Git](https://git-scm.com/downloads) and [Node.js 24.22.1](https://nodejs.org/en/download), the tested Node version. Run these commands in a terminal:
+**Pitch deck:** [View public pitch deck](https://drive.google.com/file/d/1SmUkzC-brMcHlsmGQ_sHOaLdE9Xr7GwQ/view?usp=sharing)
 
-```powershell
-git clone https://github.com/Enerbonn/Allowance.git
-cd Allowance
-npm ci
-npm run build
-npm start
-```
+**Team:** BackSlashN — Leon Angelo Cañelas (@angelord1007), Ace Lance Benegas (@lanceace0682), Irvin John Parulan (@enerbonn), Eduardo Constantino III (@imnotward_.)
 
-Open [Allowance on port 4310](http://127.0.0.1:4310/). On Windows, after the first build you can double-click [START.cmd](START.cmd) instead of running `npm start`. Use it again after a reboot. Run `npm run dev` while editing source. To check your installation, run `npm test`.
+> **Submission check:** The [Nov 7 builder handbook](https://docs.google.com/document/d/1FQWX8ICFFuuJHF-2JcQBoLOWOj8aXKEZ7rhQvQv5DK0/edit) lists newer Noir contracts than the earlier registration form used by this build. The recorded demo and proof below use the earlier deployment. This mismatch needs organizer confirmation or a tested migration before claiming compliance with the updated contract requirement. See [contract details](docs/HACKATHON.md).
 
-### Choose how to try it
+## Problem
 
-| I want to… | What I need |
-| --- | --- |
-| Try the owner and member workflow | **Start here.** Run the commands above, then follow the demo below. No API key, Docker, or wallet needed. |
-| Chat with the assistant | Create a Gemini API key, add it to `.env.local`, restart and test the connection. [Gemini quick setup](docs/AI-SETUP.md#use-gemini-directly) |
-| Connect a wallet and try Stellar Testnet | Create and fund a test wallet, connect it in Allowance and link a registered Velo project when ready to pay. [Wallet and Testnet tutorial](docs/HACKATHON.md#wallet-and-testnet-tutorial-on-windows) |
+Managers cannot be available to approve every small work purchase. Team members lose time waiting for resources, while owners still need control over budgets, responsibilities and proof of payment. Giving an assistant unrestricted wallet access would remove that control.
 
-### Try both roles
+## Solution
 
-1. Choose **Business owner → Sign up**. At **Create your owner account**, enter your name, email, and a password of at least eight characters. An existing owner without an email can add it using their current code. Each new owner gets a separate workspace with no sample records.
-2. In **Team**, select **Add member** and enter the email they gave you. Use **Draft responsibilities** on that profile if you want help drafting responsibilities and spending limits. Review suggestions before applying them.
-3. In **Projects**, create a project with a budget, then assign a task to the member. In **Spending policy**, add an approved supplier and review the spending limits and evidence rules.
-4. Back in **Team**, select **Issue code** for the member and share the member’s sign-in email and the private code shown once. Open your account menu and sign out, then choose **Team member** and sign in with their email and code.
-5. Complete the Testnet payment setup and enable **Allow automatic Testnet payments**. Submit a request for the assigned task and approved supplier. Clear eligible requests can proceed within the automatic limit, and uncertain requests go to the owner. Open the Testnet receipt after the merchant claim is confirmed.
+Owners define members, roles, assigned work, project budgets, spending categories and limits. They can enter everything manually or ask **Koa Workspace Assistant** to draft profiles and settings, review the proposed changes, then apply them.
 
-For a prefilled demo, stop the current server and start a separate database from PowerShell. These settings apply to that terminal:
+Members can submit a form or ask **Koa Purchase Assistant** to prepare an editable request preview. Clear eligible purchases can proceed automatically when the owner enables automation; uncertain suppliers or incomplete details go to owner review, while clearly unrelated purchases are declined. Server-side identity, budget and payment checks remain mandatory.
 
-```powershell
-$env:ALLOWANCE_DB = '.local/allowance-sample.sqlite'
-$env:ALLOWANCE_SAMPLE_DATA = '1'
-npm start
-```
+**Explore the shared Testnet demo:** choose **Business owner → Sign in**, email `owner1@email.com`, password `password`. This is an intentionally public demo login, not a deployment secret. Please do not overwrite its rules, reset access, or add personal information. To experiment freely, choose **Sign up** and create your own isolated owner workspace. Members have sign-in only; their owner creates their profile and issues an access code. A fresh local clone does not contain the hosted demo account.
 
-Close that terminal when you finish the sample demo. Start from a new terminal or use `START.cmd` to return to the default workspace.
+## How the agentic payment works
 
-Member budgets are lifetime totals across projects. Zero blocks spending while keeping chat access. Clearing the member limit returns to the project limits. Without AI, the request form still works and the owner can review eligible requests manually.
+1. The owner connects a funded Stellar Testnet wallet, registers its Noir device association, authorizes a constrained agent and deposits test XLM into escrow.
+2. The owner configures Velo Gas sponsorship and the workspace's automatic spending policy.
+3. A verified member explains what they need and how it supports an assigned task. Koa prepares a draft; the member previews and submits it.
+4. Gemini assesses relevance and uncertainty. The backend independently enforces roles, assignment, categories, evidence rules, budgets and the automatic limit. A recognized name alone does not prove a website or payment destination is safe.
+5. Eligible requests reserve budget and the backend agent signs a Noir payment authorization for the request amount and configured Testnet recipient. Velo sponsors the fee and submits the transaction. Uncertain outcomes retain their reservation for reconciliation.
+6. The managed demo merchant claims the authorization. Only a confirmed matching claim marks the request paid and updates the ledger/dashboard. Owner approval alone is not proof of payment.
 
-## Owner setup
+All new payments use **Stellar Testnet**. Fictional shops can be used in the demo, but funds go to the configured Testnet demo recipient, not an actual subscription provider. This prototype does not purchase fiat-only subscriptions or convert cryptocurrency to cash.
 
-Open **Overview** to track workspace setup and Testnet setup separately. Use the action on each step to enter the details yourself, or select **Set up with assistant** to work through missing steps in conversation. The assistant drafts records for you to review and apply. Enter a new member’s email on the review card. Issue their code from Team after the profile is saved.
-
-In **Connections**, select the owner wallet and initialize the managed agent. Register the device, review the agent’s per-transaction cap and expiry, then sign. You can choose a specific date, no expiry, or no contract cap. Workspace spending limits still apply. Fund escrow and set up Velo before testing a payment. [Testnet walkthrough](docs/HACKATHON.md)
-
-## Deploy the demo
-
-Use Vercel for the frontend and Render for the API and its persistent disk. Follow the [deployment guide](docs/DEPLOY.md).
-
-## Repository layout and checks
-
-- `src/` contains the browser interface; `server/` contains the API, business rules, AI instructions, persistence, and automated tests.
-- `api/` forwards Vercel requests to the hosted backend. Deployment files at the root are required by Vercel and Render.
-- `docs/` contains setup, deployment, and hackathon instructions.
-- `.local/`, `node_modules/`, build output, logs, and credentials are excluded from Git. They are not part of the GitHub payload.
-
-Run `npm run build` and `npm test` before pushing. The maintained tests in `server/*.test.ts` replace the older one-off preview and verification scripts. No live keys or wallet signatures are needed for these automated checks.
-
-## Tech stack and code map
-
-| Layer | Stack | Entry point |
-| --- | --- | --- |
-| Browser | React, TypeScript/TSX, CSS, Vite | [src/App.tsx](src/App.tsx), [src/Workspace.tsx](src/Workspace.tsx) |
-| Server | Node.js, Express, TypeScript, Zod | [server/index.ts](server/index.ts), [server/app.ts](server/app.ts) |
-| Access and AI context | scrypt, server sessions, Markdown instructions | [server/workspace.ts](server/workspace.ts), [server/agent-instructions.md](server/agent-instructions.md) |
-| Persistence and checks | SQLite, SQL, integer XLM amounts | [server/store.ts](server/store.ts), [server/domain.ts](server/domain.ts) |
-| AI | Google Gemini API | [AI setup guide](docs/AI-SETUP.md) |
-| Testnet | Stellar Wallets Kit, Stellar SDK, Noir Agent SDK, Velo SDK | [src/Testnet.tsx](src/Testnet.tsx), [server/testnet.ts](server/testnet.ts) |
+## Architecture
 
 ```mermaid
 flowchart TD
-    U[Owner or team member] --> B[React UI]
-    B --> A[Express API verifies identity and permissions]
-    A <--> S[(Local SQLite)]
-    A <-->|Optional AI| G[Gemini API]
-    A --> P{Independent spending checks}
-    P -- blocked or unclear --> O[Block or owner review]
-    P -- eligible or owner-approved Testnet --> V[Velo Gas sponsorship and submission]
-    V --> E[Noir escrow authorization on Stellar Testnet]
-    E --> C[Merchant claim and confirmation]
+    Owner[Owner: forms or Koa Workspace Assistant] --> Web[React frontend on Vercel]
+    Member[Member: form or Koa Purchase Assistant] --> Web
+    Web --> Gateway[Vercel server-side API gateway]
+    Gateway --> API[Express API on Render]
+    API <--> Gemini[Google Gemini: scoped context and proposals]
+    API <--> Data[SQLite workspaces / encrypted snapshots in Supabase Postgres]
+    API --> Rules[Identity, roles, budget and policy checks]
+    Rules --> Decision{Decision}
+    Decision -->|Uncertain| Review[Owner review]
+    Decision -->|Out of scope or hard limit| Decline[Decline or block]
+    Decision -->|Eligible| Agent[Constrained server-side Noir agent]
+    Review -->|Approved within hard limits| Agent
+    Owner --> Wallet[Browser wallet: owner signatures]
+    Wallet --> Registry[Noir device and agent registries]
+    Agent --> Velo[Velo Gas: sponsorship, submission, status]
+    Velo --> Escrow[Noir payment escrow on Stellar Testnet]
+    Escrow --> Claim[Demo merchant claim / verified receipt]
+    Claim --> API
 ```
 
-### Monitor spending and make changes
+The server stores accounts, hashed credentials, sessions, chats, reviewed context, rules and requests. Markdown files hold system instructions; conversation memory is scoped database retrieval, not a public Markdown dump. Supabase persistence is encrypted file snapshots in a private schema, **not** a normalized Supabase Auth/users implementation. Run one backend instance. Details: [deployment and persistence](docs/DEPLOY.md).
 
-- **Overview** shows paid and pending Testnet purchases. It shows the latest checked Noir escrow balance and agent expiry. Open a request to see what the member needed, the decision, and its receipt.
-- **Team** can add members, update profiles and spending limits, issue access codes, and remove or restore access. Removing access immediately ends their sessions and revokes their code. Prior requests remain in the ledger. Issue a new code after restoring access. Members sign in with their own email and issued code.
-- **Connections** remembers multiple wallets with separate Testnet settings. Select one at a time and reconnect the matching wallet to sign. The owner can deposit to Noir escrow or withdraw to the registered owner wallet. A pending payment must be reconciled before switching, disconnecting, or withdrawing. Disconnecting keeps the setup and ledger records.
+## Noir integration
 
-### How a conversation edits one field
+- SDK: **`@noirx402/agent-sdk` 0.3.0** (locked in `package-lock.json`).
+- Calls all three contracts: `device_registry` for ownership, `agent_registry` for authority, and `payment_escrow` for funding, authorization and claim.
+- [Configured contract IDs](server/testnet.ts#L13), [Noir client](server/testnet.ts#L92), [owner operation preparation](server/testnet.ts#L312), [merchant claim and receipt verification](server/testnet.ts#L192), [agent payment preparation](server/testnet.ts#L388).
+- Uses SDK `prepare` with `registerDevice`, `registerAgent`, `fundEscrow`, `defundEscrow`, `authorize` and `claim` operations; `submit` and the SDK's RPC client confirm results. See [full implementation](server/testnet.ts) and [adapter preflight/checkPayment](server/testnet-adapter.ts).
+- Current code explicitly overrides SDK defaults with the earlier registration-form IDs. **It does not yet use the newer handbook IDs.** [Compare the deployments](docs/HACKATHON.md).
 
-Ask the assistant to “Set Maya’s weekly cap to 500 XLM.” The backend sends the authenticated role, permitted records, and exact member IDs to Gemini. The model returns a reply plus a proposal such as:
+## Velo integration
 
-```json
-{
-  "type": "profile",
-  "targetId": "maya",
-  "fields": { "weeklyBudget": "500" },
-  "summary": "Set Maya’s weekly cap to 500 XLM."
-}
+- SDK: **`@carts1024/velo-sdk` 0.1.0-alpha.4**.
+- Velo Gas covers network fees, submits signed Testnet authorizations and provides tracking/recovery status. [Sponsorship and submission](server/testnet.ts#L390), [status reconciliation](server/testnet.ts#L237), [adapter](server/testnet-adapter.ts#L41).
+- Owners save their project URL/ID and scoped Testnet Gas key through Connections. Secrets remain on the backend.
+- This integration uses Gas sponsorship/status. It does **not** claim to implement Velo checkout sessions or signed checkout webhooks.
+
+## Testnet proof
+
+[Successful demo merchant claim on Stellar Expert](https://stellar.expert/explorer/testnet/tx/07a60ffafbac3ffcc3ea030fda38cb3fbaf9775b6bf2d0d8f932873362730199)
+
+Transaction hash: `07a60ffafbac3ffcc3ea030fda38cb3fbaf9775b6bf2d0d8f932873362730199`.
+
+The demo records request assessment, payment authorization, recipient claim and the saved receipt. The supplied explorer capture shows a successful claim on the earlier escrow contract. Horizon also returned `successful: true` at ledger `5599104` during this submission check. Testnet may reset; this historical proof does not establish that the newer handbook contracts have been tested.
+
+## Repo structure
+
+```text
+Allowance/                 # Repository name retained; product is KoaSpend
+├── src/                   # @koaspend/web npm workspace: React UI and assets
+├── server/                # @koaspend/server workspace: API, agent, rules, persistence, tests
+├── api/                   # Vercel gateway; browser never receives server tokens
+├── docs/                  # AI, hosting, wallet tutorial, screenshots
+├── .env.example           # Empty configuration reference; no deployment secrets
+├── package.json           # Workspace root; one npm ci installs everything
+├── package-lock.json      # Reproducible dependency versions
+├── Dockerfile             # Render backend image
+├── render.yaml            # Optional PAID disk deployment; see free Supabase path
+└── vercel.json            # Frontend build and API routing
 ```
 
-The preview shows the member and the field. When the owner applies it, the server verifies their session, checks the profile version, validates the amount, and writes only the permitted field. A normal manual form writes the same field. The weekly cap resets Mondays at midnight in Manila and counts paid and reserved purchases. It applies in addition to project, all-time, per-request and on-chain limits. Clearing the field removes the separate weekly cap. Setting it to zero blocks spending. Changing a Noir authorization or moving escrow funds requires the wallet signature steps.
+Workspace folders keep the existing working source layout. Shared business types currently live in `server/domain.ts`; the code has not been moved just to match an example folder tree.
 
-The Markdown file contains assistant instructions. SQLite stores chats, reviewed notes, requests and decisions. Before each call the backend retrieves recent messages and keyword matches from the person's permitted records and calculates exact totals separately. Owners can ask about the workspace ledger. Members can only retrieve their own requests and chats, plus shared owner-reviewed notes. The assistant can miss a paraphrased older reference, so use a request title or ID for a precise lookup. No embedding service is required. Evidence files are available for human review; the assistant sees whether evidence was supplied.
+## Run it locally
 
-Before spending, the backend checks membership, assignment, supplier, category, evidence and available budgets. Clear assistant declines close the request with a reason. Uncertain assessments, missing information, or purchases above the automatic limit go to the owner. Enable **Allow automatic Testnet payments** in Spending policy after configuring the Testnet wallet, Noir agent, escrow and Velo Gas. Owners enable Testnet automation explicitly after reviewing agent authority and spending caps. Existing simulation receipts remain historical records. It uses **integer stroops** for exact amounts, **SQLite transactions** for competing approvals, and **idempotency keys** to prevent duplicate requests. Uncertain Testnet outcomes keep a reservation for reconciliation.
+1. Install Git and **Node.js 24.22.1** (Node 24; use `node --version`). Gemini needs your own API key. Wallet + test XLM are needed only for payment testing, not initial UI/account setup.
+2. Clone and install from the root:
 
-- **Connections → steps 2–4** includes setup instructions. Noir's device registry links the setup to the owner wallet, the agent registry records spending authority, and payment escrow holds and pays out test XLM. The sponsored purchase calls payment escrow, so that is the contract to allow in Velo Gas Station.
-- **Spending policy → Supplier directory** accepts fictional demo suppliers and owner-approved alternate quote websites. Allowance checks a supplied hostname against the directory or its small catalog of recognized creative asset providers. Unknown or mismatched suppliers go to the owner for review. Testnet payments go to the dedicated workspace demo recipient.
-- **Requests** distinguishes an approval from a completed payment. With Allowance open, it checks pending Velo handoffs by their existing tracking ID. If Velo still says submitted, Allowance can verify the same authorization directly on Stellar. It records payment only when Stellar confirms the exact Noir claim to the demo recipient. Uncertain handoffs keep their budget reservation; a confirmed failed authorization releases it.
+   ```sh
+   git clone https://github.com/Enerbonn/Allowance.git
+   cd Allowance
+   npm ci
+   ```
 
-## AI credentials and APIs
+3. Copy `.env.example` to **`.env.local`**. PowerShell: `Copy-Item .env.example .env.local`; macOS/Linux: `cp .env.example .env.local`. Set `GEMINI_API_KEY`. Leave hosted variables empty for localhost. The server explicitly loads `.env.local`. On Linux/macOS, set `ALLOWANCE_STORAGE_KEY` before using protected Testnet credentials; generate it with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"` and store it privately.
+4. Build and start:
 
-An API lets the backend send scoped workspace context to Google Gemini and receive a structured response. Set your own Google AI Studio key on the backend. [AI setup guide](docs/AI-SETUP.md)
+   ```sh
+   npm run build
+   npm start
+   ```
 
-The project uses these configuration names. Each machine supplies its own values.
+5. Open http://127.0.0.1:4310. Choose **Business owner → Sign up**. Enter name, email and password. Review/save the suggested policy, add a member and issue their code, create a project and assign a task. Fresh clones have no hosted accounts or wallet keys.
+6. Open **Connections → Test connection** for Gemini. Then follow the [wallet / Noir / Velo tutorial](docs/HACKATHON.md#wallet-and-testnet-tutorial-on-windows). Do not use real funds. Verify contract compatibility before funding.
+7. Sign out and choose **Team member**. Use their saved email and owner-issued code. Ask Koa for a draft or use **New request**, preview, submit, and inspect the decision and confirmed receipt.
 
-| Name | Purpose |
-| --- | --- |
-| `GEMINI_API_KEY` | Your Google AI Studio key. Setting it selects Gemini at startup |
-| `GEMINI_MODEL` | Optional model override. Defaults to `gemini-3.1-flash-lite` |
-| `VELO_GAS_API_KEY` | Documentation label for the Testnet Gas key entered through `Save-GasKey.ps1` on Windows |
+Development: `npm run dev`. Verification: `npm test` and `npm run build`. The optional Postgres integration test requires its documented test database and is skipped without it. Automated tests do not replace a live wallet-signing/payment test. [AI setup](docs/AI-SETUP.md) · [Online setup in order](docs/DEPLOY.md).
 
-The app saves local records in `.local/allowance.sqlite`. The Git ignore rules cover `.local/`, private configuration, encrypted keys, build output and installed packages. Each clone starts with its own database. Keep the server bound to localhost for this demo.
+## Environment variables
 
-## Hackathon fit
+Copy the names from [.env.example](.env.example); fill values only in local private files or host dashboards. Existing `ALLOWANCE_` names remain for deployment compatibility.
 
-The organizer’s supplied brief asks for an agentic payment built with Velo and interacting with the current Noir Testnet contracts. Allowance uses owner-defined authority, agent-assisted requests and an independently enforced payment policy. See [the rule-by-rule mapping, contract IDs and remaining Testnet proof](docs/HACKATHON.md).
+| Name | What it is | Where to get it |
+| --- | --- | --- |
+| `GEMINI_API_KEY` | Render/local only; Koa model access | [Google AI Studio](https://aistudio.google.com/api-keys) |
+| `GEMINI_MODEL` | Optional JSON-capable model override | Your Google project's supported models; code default is `gemini-3.1-flash-lite` |
+| `ALLOWANCE_OWNER_SETUP_TOKEN` | Render only; legacy setup API token, not signup password | Generate a distinct random token (32 bytes hex) |
+| `ALLOWANCE_PROXY_TOKEN` | Shared server-only gateway token, identical on Render and Vercel | Generate 32 random bytes as hex |
+| `ALLOWANCE_PUBLIC_ORIGIN` | Exact production Vercel HTTPS origin on both hosts | Vercel Domains; no trailing slash |
+| `ALLOWANCE_STORAGE_KEY` | Stable 32-byte base64 encryption key; Render and non-Windows local Testnet | Generate securely; keep a private backup |
+| `SUPABASE_DATABASE_URL` | Render only; private Postgres connection URI | Supabase Connect → Session pooler; replace/encode database password |
+| `SUPABASE_CA_CERT` | Render only; whole trusted PEM certificate | Supabase Database Settings → SSL configuration |
+| `ALLOWANCE_BACKEND_URL` | Vercel only; exact Render HTTPS origin | Render service dashboard |
+| `ALLOWANCE_DATA_DIR` | Backend writable data directory | Dockerfile sets `/data`; local default `.local/` |
+| `PORT` | Hosted listen port | Render supplies automatically; local app uses 4310 |
+
+Do not put database passwords, Gemini/Gas keys, wallet secret keys, or real user credentials into source. `.env.local`, `.local/`, databases and protected key files are ignored. Velo Gas credentials are entered through Connections, not required in the root environment file. Do not rotate the storage encryption key on an existing database without a migration: existing data would become unreadable.
+
+## Screenshots
+
+![Successful Stellar Testnet claim](docs/images/testnet-proof.png)
+
+The [two-minute video](https://drive.google.com/file/d/1tlFxvj1F-1QsxQIXswPSQs8vGYS9QWML/view?usp=sharing) shows owner setup, member requests, automated decisions and payment evidence. It is hosted separately so Git clones stay small.
+
+## What's next
+
+- Resolve the updated handbook contract IDs with the organizers, migrate and repeat the complete payment test if required.
+- Production payment-provider/off-ramp integration, normalized database scaling, email verification/recovery and stronger production account controls.
+- This is a Testnet hackathon prototype. Render Free may cold-start and Supabase/Gemini free plans have quotas; the laptop is not required for the hosted Gemini path.
+
+## Credits
+
+Built by **BackSlashN**. Frontend design contribution: [KoaSpend UI repository](https://github.com/Kharl-png/KoaSpend). AI-assisted development/editing with OpenAI Codex; demo editing with Remotion and FFmpeg.
+
+Libraries and infrastructure: [Noir and its Agent SDK](https://github.com/noirx402/noir), [Velo and its SDK](https://github.com/Velo-Ecosystem-Collection/Velo), [Stellar JavaScript SDK](https://github.com/stellar/js-stellar-sdk), [Stellar Wallets Kit](https://github.com/Creit-Tech/Stellar-Wallets-Kit), Google Gemini, React, Vite, Express, Zod, Node SQLite, PostgreSQL/pg, Supabase, Render, Vercel, Lucide icons and Manrope. Dependency versions are recorded in `package-lock.json`.

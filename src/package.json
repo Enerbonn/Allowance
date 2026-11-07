@@ -1,0 +1,7 @@
+{
+  "name": "@koaspend/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "KoaSpend web workspace; dependencies are installed at the repository root"
+}
