@@ -55,10 +55,9 @@ export function offlineReview(): Review {
   return { recommendation: 'review', summary: 'Your request is saved for owner review.', reasoning: ['Budget and access checks still run independently.', 'The request still needs a decision.'], missingInformation: [], provider: 'Owner review required' };
 }
 
-export const RELMIO_PROVIDER = 'Relmio via local n8n';
 export const GEMINI_PROVIDER = 'Google Gemini';
 
-export function validateReview(input: unknown, provider = RELMIO_PROVIDER): Review {
+export function validateReview(input: unknown, provider = GEMINI_PROVIDER): Review {
   const schema = z.object({ recommendation: z.enum(['approve', 'review', 'decline']), outOfScope: z.boolean().nullish().transform(value => value ?? undefined), summary: z.string().min(1).max(1200), reasoning: z.array(z.string().max(800)).max(8), missingInformation: z.array(z.string().max(500)).max(8), model: z.string().max(120).optional() });
   return { ...schema.parse(input), provider };
 }

@@ -10,11 +10,11 @@ import { dataDirectory } from './protected-storage.ts';
 import { z } from 'zod';
 import { installWorkspace, publicMember, assistantMember } from './workspace.ts';
 import { redact, requestsOverride, reviewInstructions } from './assistant-safety.ts';
-import { createAiClient } from './ai.ts';
+import { createAiClient, type AiOptions } from './ai.ts';
 import {installTestnet} from './testnet.ts';
 import type { HostedPersistence } from './hosted-persistence.ts';
 
-export type AppOptions = { aiEndpoint?: string; aiToken?: string; publicSignup?: boolean; persistence?: HostedPersistence };
+export type AppOptions = AiOptions & { publicSignup?: boolean; persistence?: HostedPersistence };
 
 export function createApp(store: Store, options: AppOptions = {}, dispatch?: express.RequestHandler) {
   const app = express();
@@ -144,7 +144,7 @@ export function createApp(store: Store, options: AppOptions = {}, dispatch?: exp
       events: store.events().filter(e => isOwner || (e.requestId && requests.some(r => r.id === e.requestId))),
       categories,
       ai: aiState,
-      integrations: { payments: 'testnet', wallet: false, velo: false, noir: false, n8nUrl: 'http://localhost:5679', sampleWorkspace: store.setting('workspace-kind') !== 'blank' },
+      integrations: { payments: 'testnet', wallet: false, velo: false, noir: false, sampleWorkspace: store.setting('workspace-kind') !== 'blank' },
     });
   }
   app.get('/api/bootstrap', auth, getWorkspace);

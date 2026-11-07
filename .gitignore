@@ -9,6 +9,7 @@ dist/
 *.bin
 *.pem
 *.key
-/scripts/setup-n8n.mjs
 
 .vercel/
+
+/scripts/

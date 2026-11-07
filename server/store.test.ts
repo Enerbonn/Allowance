@@ -42,7 +42,7 @@ test('clear declines close the request while uncertain or stale assessments go t
     const decline = {
       recommendation: 'decline' as const, outOfScope: true, summary: 'This is a personal purchase.',
       reasoning: ['The request serves personal use.'], missingInformation: [],
-      provider: 'Relmio via local n8n',
+      provider: 'Google Gemini',
     };
     const clear = { ...candidate(store), status: 'analyzing' as const };
     const uncertain = { ...candidate(store), status: 'analyzing' as const };
@@ -62,7 +62,7 @@ test('Testnet automation requires explicit opt-in and rechecks current spending 
     const reviewed = store.setReview(request.id, {
       recommendation: 'approve', summary: 'Needed for the assigned work.',
       reasoning: ['Matches the assigned campaign.'], missingInformation: [],
-      provider: 'Relmio via local n8n',
+      provider: 'Google Gemini',
     });
     assert.equal(store.canAutoApprove(reviewed), false);
     const policy = { ...store.policy(), autoTestnet: true };
@@ -75,12 +75,12 @@ test('Testnet automation requires explicit opt-in and rechecks current spending 
 });
 test('automatic simulation requires real provider approval and no missing information', () => {
   const s = new Store(':memory:'); const r = candidate(s); r.status = 'analyzing'; s.create(r);
-  s.setReview(r.id, { recommendation: 'approve', summary: 'Task related.', reasoning: [], missingInformation: ['Need quote details.'], provider: 'Relmio via local n8n' });
+  s.setReview(r.id, { recommendation: 'approve', summary: 'Task related.', reasoning: [], missingInformation: ['Need quote details.'], provider: 'Google Gemini' });
   assert.equal(s.request(r.id)!.status, 'needs_review'); s.close();
 });
 test('cancelled request is not revived by a late AI response', () => {
   const s = new Store(':memory:'); const r = candidate(s); r.status = 'cancelled'; s.create(r);
-  s.setReview(r.id, { recommendation: 'approve', summary: 'Task related.', reasoning: [], missingInformation: [], provider: 'Relmio via local n8n' });
+  s.setReview(r.id, { recommendation: 'approve', summary: 'Task related.', reasoning: [], missingInformation: [], provider: 'Google Gemini' });
   assert.equal(s.request(r.id)!.status, 'cancelled'); assert.equal(s.request(r.id)!.receipt, null); s.close();
 });
 test('duplicate submit returns existing identity and refuses cross-user reuse', () => {
@@ -91,20 +91,20 @@ test('duplicate submit returns existing identity and refuses cross-user reuse', 
 test('changed policy cannot silently reuse an in-flight AI approval', () => {
   const s = new Store(':memory:'); const r = candidate(s); r.status = 'analyzing'; s.create(r);
   const p = s.policy(); p.version++; p.description = 'All purchases need a fresh review.'; s.put('policy', 'main', p);
-  s.setReview(r.id, { recommendation: 'approve', summary: 'Task related.', reasoning: [], missingInformation: [], provider: 'Relmio via local n8n' });
+  s.setReview(r.id, { recommendation: 'approve', summary: 'Task related.', reasoning: [], missingInformation: [], provider: 'Google Gemini' });
   assert.equal(s.request(r.id)!.status, 'needs_review'); assert.equal(s.request(r.id)!.receipt, null); s.close();
 });
 test('a clear assessment cannot produce a legacy simulated receipt', () => {
   const s = new Store(':memory:'); const r = candidate(s, '20'); r.status = 'analyzing'; s.create(r);
-  const result = s.setReview(r.id, { recommendation: 'approve', summary: 'Clear relevance to assigned work.', reasoning: ['All required context supplied.'], missingInformation: [], provider: 'Relmio via local n8n' });
+  const result = s.setReview(r.id, { recommendation: 'approve', summary: 'Clear relevance to assigned work.', reasoning: ['All required context supplied.'], missingInformation: [], provider: 'Google Gemini' });
   assert.equal(result.status, 'needs_review'); assert.equal(result.receipt, null); assert.equal(s.canAutoApprove(result), false);
-  s.setReview(r.id, { recommendation: 'approve', summary: 'Repeated result.', reasoning: [], missingInformation: [], provider: 'Relmio via local n8n' });
+  s.setReview(r.id, { recommendation: 'approve', summary: 'Repeated result.', reasoning: [], missingInformation: [], provider: 'Google Gemini' });
   assert.equal(s.committed('launch'), units('28')); s.close();
 });
 
 test('supplier category and quote host constrain automatic payments', () => {
   const store = new Store(':memory:');
-  const approval = { recommendation: 'approve', summary: 'Approved', reasoning: [], missingInformation: [], provider: 'Relmio via local n8n' } as const;
+  const approval = { recommendation: 'approve', summary: 'Approved', reasoning: [], missingInformation: [], provider: 'Google Gemini' } as const;
   const reviewed = { ...approval, reasoning: [], missingInformation: [] };
   const misclassified = { ...candidate(store), category: 'Software', status: 'analyzing' } as SpendRequest;
   const mismatchedQuote = { ...candidate(store), evidenceUrl: 'https://framekit.example.unrelated.example/quote', status: 'analyzing' } as SpendRequest;
