@@ -1,0 +1,139 @@
+/* Shared type roles for authentication, owner and member screens.
+   Loaded last so legacy breakpoints cannot shrink working text. */
+:root {
+  --font-ui: 'Manrope Variable', Manrope, 'Segoe UI', sans-serif;
+  --text-caption: .75rem;
+  --text-small: .875rem;
+  --text-body: 1rem;
+  --text-section: clamp(1.125rem, 1.05rem + .3vw, 1.375rem);
+  --text-title: clamp(1.75rem, 1.35rem + 1vw, 2.25rem);
+  --text-metric: clamp(2rem, 1.65rem + 1vw, 2.75rem);
+  font-family: var(--font-ui);
+  font-size: 100%;
+  line-height: 1.5;
+}
+.welcome, .shell, .modal, .workspace-dialog {
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+}
+h1, h2, h3, h4 { text-wrap: balance; overflow-wrap: break-word; }
+h1 { font-size: var(--text-title); line-height: 1.2; letter-spacing: -.035em; font-weight: 700; }
+h2 { font-size: var(--text-section); line-height: 1.3; letter-spacing: -.025em; font-weight: 700; }
+h3, h4 { font-size: var(--text-body); line-height: 1.4; letter-spacing: -.015em; font-weight: 700; }
+p { line-height: 1.6; }
+small { font-size: var(--text-caption); line-height: 1.5; }
+button, input, select, textarea { font-family: var(--font-ui); }
+:is(.shell, .welcome, .modal, .workspace-dialog) :is(input, select, textarea) {
+  font-size: var(--text-body); line-height: 1.5;
+}
+:is(.primary-btn, .secondary-btn, .text-btn), .page-heading > .primary-btn,
+.person-row .secondary-btn, .draft-card .primary-btn, .team-actions .text-btn {
+  font-size: var(--text-small); line-height: 1.4; min-height: 44px;
+}
+:is(.shell, .welcome, .modal, .workspace-dialog) label,
+.form-three label, .category-options label, .switch-row strong, .access-card legend {
+  font-size: var(--text-small); line-height: 1.5;
+}
+label small, .switch-row small, .input-unit > span { font-size: var(--text-caption); line-height: 1.5; }
+
+/* Authentication uses the same heading, field and supporting-text roles. */
+.welcome .welcome-form { max-width: 640px; padding: clamp(20px, 3vw, 48px); }
+.welcome .signin-panel { gap: 20px; padding: clamp(20px, 2.3vw, 36px); }
+.welcome .signin-panel h2 { font-size: var(--text-title); line-height: 1.2; letter-spacing: -.035em; }
+.welcome .signin-panel > p, .auth-form-card > p { font-size: var(--text-body); line-height: 1.6; }
+.welcome .role-option strong { font-size: var(--text-body); line-height: 1.4; }
+.welcome .role-option small { font-size: var(--text-small); line-height: 1.5; }
+.welcome .auth-form-card { gap: 16px; padding: clamp(16px, 1.7vw, 24px); }
+.welcome .koaspend-hero h1 {
+  font-size: clamp(2rem, 1.2rem + 2.5vw, 3.75rem);
+  line-height: 1.13; letter-spacing: -.04em;
+}
+.brand strong, .shell .sidebar-brand-row .brand strong { font-size: 1.375rem; letter-spacing: -.035em; }
+
+/* Navigation and compact metadata stay readable at every breakpoint. */
+.shell nav button, .shell .bottom-link, .shell .profile, .workspace-switch {
+  font-size: var(--text-small); line-height: 1.4;
+}
+.shell :is(.nav-label, .nav-count, .profile small, .local-label, .breadcrumbs),
+.workspace-switch small, .shell .allowance-note p, .shell .allowance-note button,
+.shell .allowance-note strong, .shell .search-box kbd {
+  font-size: var(--text-caption); line-height: 1.5;
+}
+.shell .search-box input { font-size: var(--text-small); }
+.shell .prototype-strip, .shell .prototype-strip :is(p, button, span) {
+  font-size: var(--text-caption); line-height: 1.5;
+}
+.shell .prototype-strip { flex-wrap: wrap; }
+.shell .prototype-strip p { min-width: 16ch; }
+.shell .greeting { font-size: var(--text-small); }
+
+/* Page, section and card headings. */
+.page-heading p, .section-head p, .empty-state p, .connection-hero p,
+.owner-setup-heading p, .owner-setup-note, .setup-group p, .testnet-steps p,
+.policy-section > div > p, .team-assist-banner p, .chat-intro > p {
+  font-size: var(--text-body); line-height: 1.6;
+}
+.page-heading p, .owner-setup-heading p { max-width: 72ch; }
+.section-head h2, .policy-section h2, .connection-hero h2, .chat-intro h2,
+.modal-head h2, .detail-pane h2 { font-size: var(--text-section); line-height: 1.3; }
+.project-card h3, .large .project-card h3, .connections-list h3,
+.draft-card h3, .help-steps h3, .setup-group h4 { font-size: var(--text-body); line-height: 1.4; }
+.project-card p, .large .project-card p, .task-row p, .person-row p,
+.activity-row p, .connections-list p, .help-steps p, .team-table td p,
+.detail-section p, .detail-section li, .ai-note p, .ai-note li,
+.checks-list p, .chat-message p, .notice p, .error-banner, .toast,
+.payment-details, .testnet-steps ul, .memory-note p {
+  font-size: var(--text-body); line-height: 1.6;
+}
+.task-row strong, .person-row strong, .activity-row strong, .request-name strong,
+.requester-line strong, .checks-list strong, .detail-section h3, .ai-note strong,
+.receipt strong, .mini-timeline strong, .chat-message strong, .proposal-card > strong {
+  font-size: var(--text-small); line-height: 1.5;
+}
+.request-name small, .project-budget small, .project-budget > span, .table-amount small,
+.task-row small, .person-row small, .activity-row small, .activity-row time,
+.requester-line small, .detail-id, .detail-header, .evidence-link small,
+.ai-note small, .receipt small, .mini-timeline small, .chat-message small,
+.chat-disclosure, .draft-card small, .draft-card > span, .quiet-footer,
+.connections-list small, .connection-status, .setup-group-heading span,
+.setup-group h4 small, .table-scroll-hint, .spend-total p {
+  font-size: var(--text-caption); line-height: 1.5;
+}
+.detail-facts, .detail-facts dd, .evidence-link, .detail-tabs button,
+.detail-actions > label, .retry, .inline-warning, .completed-note,
+.mini-timeline p, .tabs button, .filter-bar > select, .table-head,
+.team-table th, .team-table td, .team-toolbar > span, .prompt-options > button,
+.proposal-card dl, .spending-monitor-grid dt, .spending-monitor-grid small,
+.chat-sources, .spend-total > span, .stat-row small, .budget-track p,
+.budget-track > div:first-child, .policy-save > span, .version-chip {
+  font-size: var(--text-small); line-height: 1.5;
+}
+.badge { font-size: var(--text-caption); line-height: 1.4; white-space: normal; }
+.spend-total > strong, .detail-amount { font-size: var(--text-metric); line-height: 1.15; letter-spacing: -.04em; }
+.stat-row strong, .project-budget strong { font-size: var(--text-section); line-height: 1.3; letter-spacing: -.025em; }
+.spend-total strong small, .detail-amount > span { font-size: var(--text-small); letter-spacing: 0; }
+.detail-amount > small { font-size: var(--text-caption); letter-spacing: 0; }
+.chat-composer textarea { font-size: var(--text-body); }
+.request-name strong { overflow-wrap: anywhere; }
+.supplier-row strong { font-size: var(--text-small); }
+.supplier-row small { font-size: var(--text-caption); }
+
+@media (max-width: 760px) {
+  .welcome .koaspend-hero h1 { font-size: clamp(1.75rem, 1.25rem + 2.4vw, 2.375rem); }
+  .welcome .welcome-form { padding: 24px 16px; }
+  .page-heading { align-items: flex-start; }
+  .page-heading > :is(.primary-btn, .secondary-btn) { white-space: normal; }
+  .shell .stat-row { grid-template-columns: 1fr; gap: 16px; }
+  .shell .stat-row > div { padding: 0; border: 0; }
+  .shell .stat-row .stat-icon { display: flex; }
+  .table-head, .request-row { grid-template-columns: minmax(0, 1fr) 52px 108px; }
+  .request-name small { white-space: normal; }
+  .form-three { grid-template-columns: 1fr; gap: 16px; }
+  .section-head { flex-wrap: wrap; }
+  .shell .prototype-strip > span { margin-top: 0; }
+  .shell .prototype-strip p { flex-basis: 100%; }
+}
+@media (max-width: 760px) {
+  .filter-bar .tabs { flex-wrap: wrap; max-width: 100%; }
+  .filter-bar .tabs button { white-space: normal; }
+}
