@@ -31,11 +31,19 @@ function Modal({ title, subtitle, onClose, children, wide = false }: { title: st
   return <dialog ref={ref} aria-label={title} className={`modal ${wide ? 'wide' : ''}`} onCancel={onClose} onClick={e => { if (e.target === ref.current) onClose(); }}><div className="modal-head"><div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><button className="icon-btn" aria-label="Close dialog" onClick={onClose}><X size={20}/></button></div>{children}</dialog>;
 }
 
+const primaryNav = [
+  { name: 'Overview', icon: LayoutDashboard },
+  { name: 'Requests', icon: FileText },
+  { name: 'Assistant', icon: MessageSquare },
+  { name: 'Projects', icon: Layers3 },
+] as const;
+
 function App() {
   const [data, setData] = useState<Data | null>(null);
   const activeRole = useRef<Person['role'] | null>(null);
   const [route, setRoute] = useState(() => readRoute(window.location.pathname, window.location.search));
-  const { page, requestId: selected, projectId } = route;
+  const memberRouteDenied = data?.person.role === 'member' && !primaryNav.some(item => item.name === route.page);
+  const { page, requestId: selected, projectId } = memberRouteDenied ? { page: 'Overview' as const } : route;
   const projectFilter = projectId ?? '';
   const [checkingSession, setCheckingSession] = useState(true);
   const [filter, setFilter] = useState('all'), [search, setSearch] = useState('');
@@ -81,6 +89,12 @@ function App() {
     return () => { active = false; };
   }, []);
   useEffect(() => {
+    if (!memberRouteDenied) return;
+    window.history.replaceState(null, '', pagePath('Overview'));
+    setRoute({ page: 'Overview' });
+  }, [memberRouteDenied]);
+
+  useEffect(() => {
     function restoreRoute() {
       setRoute(readRoute(window.location.pathname, window.location.search));
       setMobileNav(false);
@@ -117,12 +131,6 @@ function App() {
   const assistantLabel = owner ? 'Workspace Assistant' : 'Purchase Assistant';
   const setupAssistant = owner && route.setupAssistant;
   const assistantTitle = setupAssistant ? 'Workspace Setup Assistant' : assistantLabel;
-  const primaryNav = [
-    { name: 'Overview', icon: LayoutDashboard },
-    { name: 'Requests', icon: FileText },
-    { name: 'Assistant', icon: MessageSquare },
-    { name: 'Projects', icon: Layers3 },
-  ] as const;
   const workspaceNav = [
     { name: 'Team', icon: Users },
     { name: 'Spending policy', icon: SlidersHorizontal },
@@ -199,18 +207,12 @@ function App() {
         {primaryNav.map(renderNavItem)}
         {owner && workspaceNav.map(renderNavItem)}
         {owner && renderNavItem(connectionsNav)}
-        {!owner && <details className="workspace-more" open={page === 'Connections' || workspaceNav.some(item => item.name === page)}>
-          <summary>More workspace tools</summary>
-          {workspaceNav.map(renderNavItem)}
-          {renderNavItem(connectionsNav)}
-        </details>}
       </nav>
       <div className="sidebar-bottom">
         {!owner && <div className="allowance-note">
           <span className="small-symbol"><ShieldCheck size={17}/></span>
           <strong>Clear rules. More freedom.</strong>
           <p>See what you can spend and follow each request to its receipt.</p>
-          <button onClick={() => navigate('Spending policy')}>View spending policy <ArrowUpRight size={14}/></button>
         </div>}
         <button className="bottom-link" onClick={() => setModal('help')}><CircleHelp size={18}/>How it works</button>
         <button className="profile" onClick={() => setModal('identity')}>
@@ -235,7 +237,7 @@ function App() {
         <span className="local-label"><CircleDot size={12} aria-hidden="true"/>Stellar Testnet</span>
       </div>
     </header>
-    <div className="prototype-strip"><span><span className="live-dot"/>{data.integrations.sampleWorkspace ? 'Sample workspace' : 'Your workspace'}</span><p>{data.integrations.sampleWorkspace ? 'Sample records. Spending follows the workspace rules.' : 'Eligible purchases can proceed within the rules you set.'}</p><button onClick={() => navigate('Connections')}>Connection status <ArrowUpRight size={12}/></button></div>
+    <div className="prototype-strip"><span><span className="live-dot"/>{data.integrations.sampleWorkspace ? 'Sample workspace' : 'Your workspace'}</span><p>{data.integrations.sampleWorkspace ? 'Sample records. Spending follows the workspace rules.' : 'Eligible purchases can proceed within the rules you set.'}</p>{owner && <button onClick={() => navigate('Connections')}>Connection status <ArrowUpRight size={12}/></button>}</div>
     {error && <div role="alert" className="error-banner floating-error"><CircleAlert size={18}/><span>{error}</span><button className="icon-btn" onClick={() => setError('')} aria-label="Dismiss error"><X size={16}/></button></div>}
     <div className="workspace-body"><main className="main-content" id="main">
       {page === 'Overview' && <>

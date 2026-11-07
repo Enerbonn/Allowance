@@ -129,12 +129,9 @@
 .shell .sidebar :is(.bottom-link, .profile):hover { background: #1c4065; }
 .shell .sidebar :is(.allowance-note, .profile) { border-color: #304d6b; }
 .shell .sidebar :is(.allowance-note p, .profile small) { color: #bfd1e9; }
-.shell .sidebar .allowance-note button { color: #b7d8ff; }
 .shell .sidebar .small-symbol { background: #193b5a; color: #bfdbff; }
 .shell .sidebar :is(.nav-count, .profile .avatar) { background: #dceaff; color: #1b426d; }
 .shell .sidebar nav button[aria-current="page"] { background: #e2edff; color: #183e69; }
-.workspace-more > summary { color: #bfd1e9; cursor: pointer; padding: 13px; font-size: 12px; }
-.workspace-more[open] > button { padding-inline-start: 23px; }
 .workspace-nav-backdrop { display: none; }
 .shell .topbar { background: #edf4ff; }
 .shell .prototype-strip { background: #e4eefb; color: #34516f; }
