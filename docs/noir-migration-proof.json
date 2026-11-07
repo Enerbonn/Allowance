@@ -1,0 +1,60 @@
+{
+  "network": "Stellar Testnet",
+  "contracts": {
+    "deviceRegistry": "CAC4KOLHDLDYDWBOKXNKRN5KVHO56PLOIFXDLTBUWGVN6GVDEB7FQHU5",
+    "agentRegistry": "CCMZDSPTLX7IIJWCYEUM5DJUHOSOYSTHGK777S2TXZWEMC5ZZGPJ3EBV",
+    "paymentEscrow": "CC7EAW5FNJEDBS7THM5IT6XIOHO4AOYMLXT3KSZ3HWUIKEACTW7E5BFS"
+  },
+  "checks": [
+    {
+      "name": "deviceRegistry",
+      "address": "CAC4KOLHDLDYDWBOKXNKRN5KVHO56PLOIFXDLTBUWGVN6GVDEB7FQHU5",
+      "present": true
+    },
+    {
+      "name": "agentRegistry",
+      "address": "CCMZDSPTLX7IIJWCYEUM5DJUHOSOYSTHGK777S2TXZWEMC5ZZGPJ3EBV",
+      "present": true
+    },
+    {
+      "name": "paymentEscrow",
+      "address": "CC7EAW5FNJEDBS7THM5IT6XIOHO4AOYMLXT3KSZ3HWUIKEACTW7E5BFS",
+      "present": true
+    }
+  ],
+  "transactions": [
+    {
+      "kind": "registerDevice",
+      "hash": "d75f32657e9f827cbfcd6210dc31537e2e045986530a99d0b353eb5217d323f0"
+    },
+    {
+      "kind": "registerAgent",
+      "hash": "cd76b8f73926474281ea2d18cc53b33178677798b8ab7732937db9dbadbb3a16"
+    },
+    {
+      "kind": "fundEscrow",
+      "hash": "77ff33fd6f13a79485a4fa2632005b5240958be15552b5e1206ee1578daf9b74"
+    },
+    {
+      "kind": "authorize",
+      "hash": "ebabcff0f72b1c5ca851fb313aec71dbbe57117268d39c0a6ee775098aae3c39"
+    },
+    {
+      "kind": "claim",
+      "hash": "3e1fd95eda8900b870097abc34cd2ccd74baca853d5a7ce6a7e03bd218daf68f"
+    },
+    {
+      "kind": "defundEscrow",
+      "hash": "6e7f525d752931b46d2ac56f08e907233f1b5a9e52eb0c27a099816c2ed85ac1"
+    }
+  ],
+  "owner": "GDJ4HDHQ2AKUSJA2BW3QFZ5SGR2SI766432PMTCWXLXCD2VXKGGG2EB4",
+  "agent": "GBCOAG6NYHEXUBMUYVWI3CHX4P4M5OGQYXAW7QATKBOF6DMB75XF7HWQ",
+  "merchant": "GAPUQYSRYDDTSPUY64CD35WASTBINSIFOQXXCR253JVZCZWQ7MOVHRLT",
+  "remainingEscrow": "40000000",
+  "passed": true,
+  "scope": "Live Noir SDK lifecycle; no Velo sponsorship or browser/AI flow tested by this probe",
+  "receiptVerified": true,
+  "amountXlm": "1",
+  "checkedAt": "2026-11-07T14:25:29.306Z"
+}

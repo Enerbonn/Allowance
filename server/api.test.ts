@@ -1,3 +1,4 @@
+import { EVENT_CONTRACTS, LEGACY_CONTRACTS } from './testnet.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Store } from './store.ts';
@@ -252,6 +253,13 @@ test('owner can switch Stellar wallets and keep each wallet’s Testnet setup', 
     const current = await (await fetch(base + '/testnet', { headers: { cookie } })).json();
     assert.equal(current.owner, first);
     assert.equal(current.agent, demoAgent);
+    assert.deepEqual(current.contracts, EVENT_CONTRACTS);
+    assert.equal(current.checks, null);
+    store.put('wallet-pending','old-deployment-signature',{id:'old-deployment-signature',owner:first,state:'pending',createdAt:Date.now(),contracts:LEGACY_CONTRACTS});
+    const staleSetup=await post('/testnet/submit-setup',{id:'old-deployment-signature',signedXdr:'must-not-be-submitted'},cookie);
+    assert.equal(staleSetup.status,400);
+    assert.match((await staleSetup.json()).error,/deployment changed/i);
+
     assert.equal((await post('/testnet/wallet', { address: 'bad-address' }, cookie)).status, 400);
 
     const selected = await post('/testnet/wallet', { address: second }, cookie);
@@ -284,7 +292,13 @@ test('owner can switch Stellar wallets and keep each wallet’s Testnet setup', 
     const restored = await (await post('/testnet/wallet', { address: first }, cookie)).json();
     assert.equal(restored.agent, demoAgent);
     assert.equal(restored.agentSettings, null);
-    assert.equal(restored.checks.escrow, '500000000');
+    assert.equal(restored.checks, null); // Earlier, unscoped balance must not appear on the new deployment.
+    assert.equal(restored.deploymentChanged, true);
+    store.put('testnet-checks',first,{escrow:'170000000',contracts:Object.entries(EVENT_CONTRACTS).map(([name,address])=>({name,address,exists:true}))});
+    const freshStatus=await (await fetch(base+'/testnet',{headers:{cookie}})).json();
+    assert.equal(freshStatus.checks.escrow,'170000000');
+    assert.equal(store.get<any>('testnet','checks').escrow,'500000000'); // Historical record is retained, not relabeled.
+
     assert.equal((await (await post('/testnet/wallet', { address: second }, cookie)).json()).projectId, 'test-project');
     assert.equal(store.people().length, 1);
     assert.equal(store.people()[0].name, 'Wallet Owner');

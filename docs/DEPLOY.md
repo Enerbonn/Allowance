@@ -70,7 +70,7 @@ Redeploy Vercel after changing variables. These are server-side gateway values. 
 
 1. Open the production Vercel URL and `/api/health`; confirm Supabase persistence.
 2. Sign up as a new owner, save the starter policy, add a member, create a project and assign a task. Issue the member code through Team.
-3. Test Gemini in Connections. Complete [Testnet wallet/Noir/Velo setup](HACKATHON.md#wallet-and-testnet-tutorial-on-windows). Check the handbook contract mismatch before funding.
+3. Test Gemini in Connections. Complete [Testnet wallet/Noir/Velo setup](HACKATHON.md#wallet-and-testnet-tutorial-on-windows). For an existing wallet, follow the contract migration steps before funding.
 4. Sign in as the member; submit an eligible request. Check that authorization, claim, receipt and dashboard agree. Test an uncertain request requiring owner review. Never infer payment success just from an approval.
 5. Restart Render and verify the same account, policy and request remain. Existing local/tunnel records are not automatically imported into a fresh Supabase project.
 

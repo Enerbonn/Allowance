@@ -30,6 +30,7 @@ export type TestnetStatus = {
   boundSuppliers: string[];
   gasStationUrl: string;
   initialized: boolean;
+  deploymentChanged?: boolean;
   gasKeyStored: boolean;
   agent?: string;
   merchant?: string;
@@ -212,6 +213,7 @@ export function TestnetPanel({ data, focus, addSupplier }: { data: { suppliers: 
       <span className="badge neutral">Testnet</span>
     </div>
     <div className="notice"><ShieldCheck size={18}/><p>Start with your wallet, then set spending limits, add test funds, and set up payment fees. Approve changes in your wallet when prompted.</p></div>
+    {state.deploymentChanged && <div className="notice" role="status"><ShieldCheck size={18}/><p><strong>Noir payment setup has changed.</strong> Your wallet and past receipts are saved. Refresh the setup, register your wallet, authorize Koa and add test funds on the updated contracts. Previous escrow funds stay on the earlier contracts and are not moved automatically. In Velo Gas Station, allow the new escrow address shown in step 4. Finish pending earlier payments before starting another.</p></div>}
     <ol className="testnet-steps">
       <li id="testnet-step-wallet">
         <h3>Choose your owner wallet</h3>

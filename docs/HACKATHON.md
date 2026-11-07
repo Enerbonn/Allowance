@@ -2,27 +2,29 @@
 
 The [builder handbook updated Nov 7](https://docs.google.com/document/d/1FQWX8ICFFuuJHF-2JcQBoLOWOj8aXKEZ7rhQvQv5DK0/edit) is the submission reference. It requires an agentic payment through the Noir SDK on its deployed contracts, use of Velo SDK, Testnet only, a public workspace monorepo, a live website, two-minute video, public pitch deck and registered team identities.
 
-## Important contract mismatch
+## Current Testnet contracts
 
-The build and recorded demo use these **earlier registration-form** IDs, explicitly configured at [server/testnet.ts:13](../server/testnet.ts#L13):
+Main now uses these Nov 7 handbook addresses, matching the installed Noir SDK defaults:
 
-| Contract | Recorded demo / current code |
-| --- | --- |
-| device_registry | `CB4DPMGOA374JIB2ZVD4AHW5GJKQUYNOFGRYNOJ75EFH2KCJSMHOWIRA` |
-| agent_registry | `CBTDMJVCFQDIVWZBKAKZ2FQ3UEJNAAUFYCTJ3E4ON2MYXPLPSIXQ25JZ` |
-| payment_escrow | `CA5S4S7QGHJHJWVJBYL3CXZXZTNGKXMNZVDAEQNN7NUXFP4D7BYK7HIX` |
-
-The newer handbook requires:
-
-| Contract | Nov 7 handbook deployment |
+| Contract | Address |
 | --- | --- |
 | device_registry | `CAC4KOLHDLDYDWBOKXNKRN5KVHO56PLOIFXDLTBUWGVN6GVDEB7FQHU5` |
 | agent_registry | `CCMZDSPTLX7IIJWCYEUM5DJUHOSOYSTHGK777S2TXZWEMC5ZZGPJ3EBV` |
 | payment_escrow | `CC7EAW5FNJEDBS7THM5IT6XIOHO4AOYMLXT3KSZ3HWUIKEACTW7E5BFS` |
 
-**Do not claim updated-contract compliance from the earlier receipt.** Confirm the applicable IDs with the organizer. Migrating requires checking SDK compatibility, registering/authorizing/funding against the new contracts, updating Velo's allowlist, and obtaining fresh authorization/claim proof. Existing escrow and authority are not transferred by changing an address in source. This documentation pass preserves the working payment configuration.
+## Existing wallets after the update
 
-The root README links the real Noir/Velo code paths, historical proof and limitations. Device registry establishes ownership; agent registry constrains authority; escrow holds funds and records authorization/claim. Velo sponsors/submits the payment and provides recovery status. This build does not use Velo checkout webhooks.
+`stable3` preserves the earlier app at commit `e359837`. The historical video and original receipt use the earlier registration-form deployment. New payments on main use the addresses above.
+
+1. Finish checking any pending earlier payment. It retains its original contract deployment and budget reservation; do not submit another payment to replace an uncertain one.
+2. Open Connections with your owner wallet on Testnet. Refresh the Noir setup. The app discards earlier cached balances/permissions from its current progress display; it does not erase their historical records.
+3. Use Create/check test payment accounts if needed. Existing protected agent/merchant keys are retained. Register the owner/device on the new contracts, review and sign the agent permission, and deposit new test XLM. Existing escrow funds and authority do not transfer.
+4. In your Velo project, add the **new payment escrow address** above to Verify → Contracts and the Gas Station sponsorship allowlist. Keep sponsorship enabled and the relayer funded. The existing project-scoped Testnet Gas key can remain if valid.
+5. Refresh Connections and submit a small eligible member request. Confirm the new authorization, recipient claim and dashboard receipt. Old setup signatures prepared before the deployment update are rejected; prepare/sign again.
+
+Earlier contract addresses remain in `LEGACY_CONTRACTS` only for existing payment recovery and historical comparison. Do not register/fund new payments against them. Funds already on an earlier escrow stay there; returning those funds requires owner-signed operations on that earlier deployment, outside the current setup UI. Never run two writing backend versions against the same Supabase snapshot store.
+
+The root README links the implementation and proof. Device registry establishes ownership; agent registry constrains authority; escrow holds funds and records authorization/claim. Velo sponsors/submits payments and supplies recovery status. This build does not use checkout webhooks.
 
 ## Wallet and Testnet tutorial on Windows
 

@@ -10,13 +10,30 @@ import {dataDirectory, protect, protectedStorageReady, unprotect, workspaceStora
 import { z } from 'zod';
 import {money,units,type SpendRequest,type Supplier} from './domain.ts';
 
-export const EVENT_CONTRACTS={deviceRegistry:'CB4DPMGOA374JIB2ZVD4AHW5GJKQUYNOFGRYNOJ75EFH2KCJSMHOWIRA',agentRegistry:'CBTDMJVCFQDIVWZBKAKZ2FQ3UEJNAAUFYCTJ3E4ON2MYXPLPSIXQ25JZ',paymentEscrow:'CA5S4S7QGHJHJWVJBYL3CXZXZTNGKXMNZVDAEQNN7NUXFP4D7BYK7HIX'};
+export const LEGACY_CONTRACTS={deviceRegistry:'CB4DPMGOA374JIB2ZVD4AHW5GJKQUYNOFGRYNOJ75EFH2KCJSMHOWIRA',agentRegistry:'CBTDMJVCFQDIVWZBKAKZ2FQ3UEJNAAUFYCTJ3E4ON2MYXPLPSIXQ25JZ',paymentEscrow:'CA5S4S7QGHJHJWVJBYL3CXZXZTNGKXMNZVDAEQNN7NUXFP4D7BYK7HIX'};
+// Handbook deployment, also built into @noirx402/agent-sdk 0.3.0.
+export const EVENT_CONTRACTS={deviceRegistry:'CAC4KOLHDLDYDWBOKXNKRN5KVHO56PLOIFXDLTBUWGVN6GVDEB7FQHU5',agentRegistry:'CCMZDSPTLX7IIJWCYEUM5DJUHOSOYSTHGK777S2TXZWEMC5ZZGPJ3EBV',paymentEscrow:'CC7EAW5FNJEDBS7THM5IT6XIOHO4AOYMLXT3KSZ3HWUIKEACTW7E5BFS'};
+export function sameContracts(value: unknown, expected = EVENT_CONTRACTS) {
+ const candidate=value as Record<string,unknown>|null;
+ return !!candidate && Object.entries(expected).every(([name,address])=>candidate[name]===address);
+}
+export function currentContractChecks(value: unknown) {
+ const checks=value as {contracts?:{name:string;address?:string}[]}|null;
+ return !!checks && Array.isArray(checks.contracts) && Object.entries(EVENT_CONTRACTS).every(([name,address])=>checks.contracts!.some(c=>c.name===name&&c.address===address));
+}
+export function paymentContracts(operation: {contracts?:unknown}) {
+ // Records predating this upgrade were submitted to the earlier deployment.
+ const contracts=operation.contracts ?? LEGACY_CONTRACTS;
+ if(!sameContracts(contracts)&&!sameContracts(contracts,LEGACY_CONTRACTS))throw new Error('Unknown payment contract deployment. Do not retry this payment.');
+ return contracts as typeof EVENT_CONTRACTS;
+}
+
 const network={...TESTNET,contracts:EVENT_CONTRACTS};
 const asset=Asset.native().contractId(Networks.TESTNET);
-export function matchesMerchantClaim(events: xdr.ContractEvent[], merchant: string, amount: number) {
+export function matchesMerchantClaim(events: xdr.ContractEvent[], merchant: string, amount: number, escrowContract = EVENT_CONTRACTS.paymentEscrow) {
  return events.some(event => {
   const contract=event.contractId();
-  if(!contract||!Buffer.isBuffer(contract)||StrKey.encodeContract(contract)!==EVENT_CONTRACTS.paymentEscrow) return false;
+  if(!contract||!Buffer.isBuffer(contract)||StrKey.encodeContract(contract)!==escrowContract) return false;
   const body=event.body().v0(), [kind, recipient]=body.topics();
   return !!kind && !!recipient && scValToNative(kind)==='claim' &&
     scValToNative(recipient)===merchant && scValToNative(body.data())===BigInt(amount);
@@ -27,14 +44,14 @@ function contractEvents(result: rpc.Api.GetSuccessfulTransactionResponse) {
  const legacy=meta.switch()===3 ? meta.v3().sorobanMeta()?.events() ?? [] : [];
  return [...result.events.contractEventsXdr.flat(),...legacy];
 }
-export function matchesAuthorizationReceipt(result:rpc.Api.GetTransactionResponse, expected:{innerHash:string;deviceHash:string;merchant:string;amount:number}) {
+export function matchesAuthorizationReceipt(result:rpc.Api.GetTransactionResponse, expected:{innerHash:string;deviceHash:string;merchant:string;amount:number}, escrowContract = EVENT_CONTRACTS.paymentEscrow) {
  if(result.status!=='SUCCESS')return false;
  const envelope=TransactionBuilder.fromXDR(result.envelopeXdr,Networks.TESTNET);
  const transaction='innerTransaction' in envelope ? envelope.innerTransaction : envelope;
  if(transaction.hash().toString('hex')!==expected.innerHash)return false;
  return contractEvents(result).some(event=>{
   const contract=event.contractId();
-  if(!Buffer.isBuffer(contract)||StrKey.encodeContract(contract)!==EVENT_CONTRACTS.paymentEscrow)return false;
+  if(!Buffer.isBuffer(contract)||StrKey.encodeContract(contract)!==escrowContract)return false;
   const body=event.body().v0(),[name,device,merchant]=body.topics();
   if(!name||!device||!merchant||scValToNative(name)!=='authorize')return false;
   const deviceBytes=scValToNative(device);
@@ -106,7 +123,7 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   const previous = legacy();
   const workspace = workspaceStorage.getStore()?.id;
   const deviceScope = workspace ? 'allowance:' + workspace + ':' : 'allowance:';
-  return saved || (previous?.owner===address ? previous : {owner:address,deviceHash:address?createHash('sha256').update(deviceScope+address).digest('hex'):'',asset,contracts:EVENT_CONTRACTS});
+  return {...(saved || (previous?.owner===address ? previous : {owner:address,deviceHash:address?createHash('sha256').update(deviceScope+address).digest('hex'):'',asset})),contracts:EVENT_CONTRACTS};
  }
  function keyName(c: WalletConfig, role: string) {
   return legacy()?.owner===c.owner ? `testnet-${role}` : `testnet-${role}-${c.deviceHash}`;
@@ -152,7 +169,10 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
     const binding = store.get<{merchant: string}>('testnet-supplier', c.owner + ':' + s.id);
     return s.approved && c.merchant && (binding?.merchant || s.destination) === c.merchant;
   }).map(s => s.id);
-  return {...c,wallets:savedWallets(),projectId:active.projectId,gasStationUrl:active.projectId?`https://www.velo-build.dev/projects/${active.projectId}/gas`:'',initialized:!!c.agent,gasKeyStored:!!availableGasPath(active),agentSettings:agentSettings(c),boundSuppliers,network:'Stellar Testnet',checks:store.get('testnet-checks',c.owner)||(legacy()?.owner===c.owner?store.get('testnet','checks'):null)||null,operations:store.list<any>('chain-operations').map(({signedXdr,...v})=>v)};
+  const cached=store.get('testnet-checks',c.owner)||(legacy()?.owner===c.owner?store.get('testnet','checks'):null)||null;
+  const saved=store.get<WalletConfig>('testnet-wallet',c.owner)||(legacy()?.owner===c.owner?legacy():null);
+  const deploymentChanged=!!saved && !sameContracts(saved.contracts);
+  return {...c,deploymentChanged,wallets:savedWallets(),projectId:active.projectId,gasStationUrl:active.projectId?`https://www.velo-build.dev/projects/${active.projectId}/gas`:'',initialized:!!c.agent,gasKeyStored:!!availableGasPath(active),agentSettings:agentSettings(c),boundSuppliers,network:'Stellar Testnet',checks:currentContractChecks(cached)?cached:null,operations:store.list<any>('chain-operations').map(({signedXdr,...v})=>v)};
  }
  async function inspect(c: WalletConfig) {
   const contracts = await Promise.all(Object.entries(EVENT_CONTRACTS).map(async ([name,address]) => {
@@ -188,20 +208,21 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   try { await handler(req,res,next); } finally { busy=false; }
  };
  async function settleClaim(op:any,r:SpendRequest,actor:string) {
-  const c=config();
+  const c=config(),contracts=paymentContracts(op);
+  const paymentNoir=new NoirAgentClient({network:{...TESTNET,contracts}});
   const finish=()=>{op.state='claimed';delete op.error;store.db.exec('BEGIN IMMEDIATE');try{store.put('chain-operations',r.id,op);r.status='paid';r.receipt=op.claimHash;store.saveRequest(r);store.db.prepare("UPDATE commitments SET state='paid' WHERE request_id=?").run(r.id);store.event('Testnet payment claimed',`Authorization ${op.result.transactionHash}; merchant claim ${op.claimHash}.`,actor,r.id,'chain');store.db.exec('COMMIT');}catch(error){store.db.exec('ROLLBACK');throw error;}return op;};
   if(r.status==='paid')return op;
   if(!c.merchant)throw new Error('The saved demo recipient is unavailable.');
   if(!op.claimHash){
    // Noir claims the merchant's entire pending balance. Never assign a
    // combined payout to one request.
-   if(await noir.getPendingBalance(c.merchant)!==BigInt(r.amount)){
+   if(await paymentNoir.getPendingBalance(c.merchant)!==BigInt(r.amount)){
     op.state='claim_needs_review';store.put('chain-operations',r.id,op);return op;
    }
-   const merchant=getKey(keyName(c,'merchant'));const claimXdr=await noir.prepare(merchant.publicKey(),{kind:'claim',token:asset});const claimTx=TransactionBuilder.fromXDR(claimXdr,Networks.TESTNET);if(!('source' in claimTx)||claimTx.source!==c.merchant)throw new Error('Unexpected merchant transaction.');claimTx.sign(merchant);op.claimHash=claimTx.hash().toString('hex');op.state='claim_submitting';store.put('chain-operations',r.id,op);await checkpoint?.();await noir.submit(claimTx.toXDR());
+   const merchant=getKey(keyName(c,'merchant'));const claimXdr=await paymentNoir.prepare(merchant.publicKey(),{kind:'claim',token:asset});const claimTx=TransactionBuilder.fromXDR(claimXdr,Networks.TESTNET);if(!('source' in claimTx)||claimTx.source!==c.merchant)throw new Error('Unexpected merchant transaction.');claimTx.sign(merchant);op.claimHash=claimTx.hash().toString('hex');op.state='claim_submitting';store.put('chain-operations',r.id,op);await checkpoint?.();await paymentNoir.submit(claimTx.toXDR());
   }
-  const result=await (recovery.getTransaction?.(op.claimHash) ?? noir.server.getTransaction(op.claimHash));
-  if(result.status==='SUCCESS'&&matchesMerchantClaim(contractEvents(result),c.merchant,r.amount))return finish();
+  const result=await (recovery.getTransaction?.(op.claimHash) ?? paymentNoir.server.getTransaction(op.claimHash));
+  if(result.status==='SUCCESS'&&matchesMerchantClaim(contractEvents(result),c.merchant,r.amount,contracts.paymentEscrow))return finish();
   op.state=result.status==='FAILED'?'claim_failed':result.status==='SUCCESS'?'claim_needs_review':'claim_confirmation_pending';
   store.put('chain-operations',r.id,op);return op;
  }
@@ -219,13 +240,13 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
   return op;
  }
  async function readAuthorizationProof(op:any,r:SpendRequest) {
-  const c=config(),innerHash=op.transactionHash || op.identity?.transactionHash;
+  const c=config(),contracts=paymentContracts(op),innerHash=op.transactionHash || op.identity?.transactionHash;
   if(!/^[a-f0-9]{64}$/.test(innerHash||'')||innerHash!==op.identity?.transactionHash||!c.deviceHash||!c.merchant)return null;
   const hashes=[...new Set<string>([op.result?.outerTransactionHash,innerHash].filter(v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v)))];
   for(const hash of hashes){
    try {
     const receipt=await (recovery.getTransaction?.(hash) ?? noir.server.getTransaction(hash));
-    if(matchesAuthorizationReceipt(receipt,{innerHash,deviceHash:c.deviceHash,merchant:c.merchant,amount:r.amount}))return hash;
+    if(matchesAuthorizationReceipt(receipt,{innerHash,deviceHash:c.deviceHash,merchant:c.merchant,amount:r.amount},contracts.paymentEscrow))return hash;
    }catch { /* An unavailable ledger read cannot establish the result. */ }
   }
   return null;
@@ -338,14 +359,15 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
     }
     throw error;
   }
-  const tx=TransactionBuilder.fromXDR(unsignedXdr,Networks.TESTNET);const id=randomUUID();store.put('wallet-pending',id,{id,hash:tx.hash().toString('hex'),kind,createdAt:Date.now(),state:'pending',owner:c.owner});res.json({id,unsignedXdr,owner:c.owner,networkPassphrase:Networks.TESTNET,kind});
+  const tx=TransactionBuilder.fromXDR(unsignedXdr,Networks.TESTNET);const id=randomUUID();store.put('wallet-pending',id,{id,hash:tx.hash().toString('hex'),kind,createdAt:Date.now(),state:'pending',owner:c.owner,contracts:EVENT_CONTRACTS});res.json({id,unsignedXdr,owner:c.owner,networkPassphrase:Networks.TESTNET,kind});
  }));
  app.post('/api/testnet/submit-setup',auth,owner,exclusive(async(req,res)=>{
   const c=config(),pending=store.get<any>('wallet-pending',String(req.body.id));if(!pending||pending.state!=='pending'||Date.now()-pending.createdAt>300000)throw new Error('Prepare a fresh wallet transaction.');
+  if(!sameContracts(pending.contracts))throw new Error('The Noir deployment changed. Prepare and sign a fresh setup transaction.');
   if(pending.owner!==c.owner)throw new Error('The active wallet changed. Prepare a fresh wallet transaction.');
   if (['revokeAgent','defundEscrow'].includes(pending.kind) && hasUnsettledPayment()) throw new Error('Reconcile the pending Testnet payment before revoking or withdrawing.');
   const signed=String(req.body.signedXdr||'');validateOwnerSetupSignature(signed,pending.hash,c.owner);
-  pending.state='submitting';store.put('wallet-pending',pending.id,pending);await checkpoint?.();const hash=await noir.submit(signed);pending.state='confirmed';pending.hash=hash;store.put('wallet-pending',pending.id,pending);store.event('Testnet setup confirmed',`${pending.kind}: ${hash}`,res.locals.person.name,null,'chain');await inspect(c);res.json({hash});
+  pending.state='submitting';store.put('wallet-pending',pending.id,pending);await checkpoint?.();const hash=await noir.submit(signed);pending.state='confirmed';pending.hash=hash;store.put('wallet-pending',pending.id,pending);store.event('Testnet setup confirmed',`${pending.kind}: ${hash}`,res.locals.person.name,null,'chain');store.put('testnet-wallet',c.owner,c);await inspect(c);res.json({hash});
  }));
  async function approveRequest(id: string, actor: string, note: string, automatic = false) {
   assertIdle();
@@ -362,7 +384,7 @@ export function installTestnet(app:Express,store:Store,auth:RequestHandler,owner
    const velo=gas();
    if(!note.trim())throw new Error('Add a decision note.');const failed=store.checks(r).filter(v=>!v.pass);if(failed.length)throw new Error(failed.map(v=>v.detail).join(' '));if(!['needs_review','blocked'].includes(r.status))throw new Error('Request is not available for payment.');
    const agent=getKey(keyName(c,'agent'));const check=await noir.checkPayment({deviceHash:c.deviceHash,agent:agent.publicKey(),asset,amount:BigInt(r.amount)});if(!check.ok)throw new Error(`Noir refused payment: ${check.reason}`);
-   const nonce=BigInt(Math.max(Date.now(),Number(store.setting('chain-nonce')||0)+1));const op:any={id,nonce:String(nonce),state:'reserved',createdAt:new Date().toISOString()};
+   const nonce=BigInt(Math.max(Date.now(),Number(store.setting('chain-nonce')||0)+1));const op:any={id,contracts:EVENT_CONTRACTS,nonce:String(nonce),state:'reserved',createdAt:new Date().toISOString()};
    store.db.exec('BEGIN IMMEDIATE');
    try {
     const current=store.request(id);

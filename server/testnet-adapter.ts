@@ -55,5 +55,5 @@ export class TestnetAdapter {
 // An integration must reserve the business allowance BEFORE invoking this adapter,
 // serialize agent-account writes, persist safe recovery identity, and reconcile it
 // after timeouts. Merchant claim remains a separate merchant-signed operation.
-// This module is type-checked and its configuration guards are tested; no live
-// Testnet authorization/claim has been executed for this project.
+// This module is type-checked and its configuration guards are tested; no complete
+// browser/Velo flow through this adapter is implied by the SDK-only migration probe.

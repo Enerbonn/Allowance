@@ -1,3 +1,4 @@
+import { TESTNET as SDK_TESTNET } from '@noirx402/agent-sdk';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
@@ -5,7 +6,7 @@ import {Store} from './store.ts';
 import type {SpendRequest} from './domain.ts';
 import type {GasSubmitResult} from '@carts1024/velo-sdk';
 import {Account,Address,Asset,Keypair,Networks,Operation,TransactionBuilder,StrKey,nativeToScVal,xdr} from '@stellar/stellar-sdk';
-import {validateOwnerSetupSignature,EVENT_CONTRACTS,parseAgentSettings,matchesMerchantClaim,matchesAuthorizationReceipt,installTestnet} from './testnet.ts';
+import {validateOwnerSetupSignature,EVENT_CONTRACTS,LEGACY_CONTRACTS,sameContracts,currentContractChecks,paymentContracts,parseAgentSettings,matchesMerchantClaim,matchesAuthorizationReceipt,installTestnet} from './testnet.ts';
 
 test('owner setup signatures bind the exact prepared transaction and Testnet',()=>{
  const owner=Keypair.random(),recipient=Keypair.random();
@@ -13,7 +14,7 @@ test('owner setup signatures bind the exact prepared transaction and Testnet',()
  const expected=build('1');const hash=expected.hash().toString('hex');assert.throws(()=>validateOwnerSetupSignature(expected.toXDR(),hash,owner.publicKey()),/does not match/);expected.sign(owner);assert.equal(validateOwnerSetupSignature(expected.toXDR(),hash,owner.publicKey()).source,owner.publicKey());
  const altered=build('2');altered.sign(owner);assert.throws(()=>validateOwnerSetupSignature(altered.toXDR(),hash,owner.publicKey()),/does not match/);
  const mainnet=build('1',Networks.PUBLIC);mainnet.sign(owner);assert.throws(()=>validateOwnerSetupSignature(mainnet.toXDR(),hash,owner.publicKey()),/does not match/);
- assert.equal(EVENT_CONTRACTS.deviceRegistry,'CB4DPMGOA374JIB2ZVD4AHW5GJKQUYNOFGRYNOJ75EFH2KCJSMHOWIRA');
+ assert.equal(EVENT_CONTRACTS.deviceRegistry,'CAC4KOLHDLDYDWBOKXNKRN5KVHO56PLOIFXDLTBUWGVN6GVDEB7FQHU5');
 });
 
 test('Noir agent terms support an explicit cap, no cap and no expiry', () => {
@@ -74,7 +75,7 @@ test('Stellar can recover a submitted fee-bumped authorization only when the exa
  store.put('testnet','config',{owner:source.publicKey(),merchant:expected.merchant,deviceHash:expected.deviceHash});
  store.create(request);
  store.db.prepare("INSERT INTO commitments VALUES(?,?,?,'reserved')").run(request.id,request.projectId,request.amount);
- store.put('chain-operations',request.id,{id:request.id,state:'submitted',identity,transactionHash:expected.innerHash,claimHash});
+ store.put('chain-operations',request.id,{id:request.id,contracts:EVENT_CONTRACTS,state:'submitted',identity,transactionHash:expected.innerHash,claimHash});
  const lookups:string[]=[];
  const stub=(_req:any,_res:any,next:any)=>next();
  const handler=installTestnet(express(),store,stub,stub,undefined,{
@@ -101,7 +102,7 @@ test('Stellar can recover a submitted fee-bumped authorization only when the exa
  }finally{store.close();}
 });
 
-test('existing Velo handoff recovers once, and only a verified Noir claim settles the budget',async()=>{
+test('earlier-deployment Velo handoff recovers once, and only a verified Noir claim settles the budget',async()=>{
  const store=new Store(':memory:');
  const merchant=Keypair.random().publicKey();
  store.put('testnet','config',{owner:Keypair.random().publicKey(),merchant});
@@ -123,7 +124,7 @@ test('existing Velo handoff recovers once, and only a verified Noir claim settle
    assert.equal(txHash,receipt);
    const response=receiptVisible?{
     status:'SUCCESS',resultMetaXdr:{switch:()=>4},
-    events:{contractEventsXdr:[[event(EVENT_CONTRACTS.paymentEscrow,merchant,10000000n)]]},
+    events:{contractEventsXdr:[[event(LEGACY_CONTRACTS.paymentEscrow,merchant,10000000n)]]},
    }:{status:'NOT_FOUND'};
    return response as unknown as Awaited<ReturnType<import('@noirx402/agent-sdk').NoirAgentClient['server']['getTransaction']>>;
   },
@@ -157,4 +158,20 @@ test('existing Velo handoff recovers once, and only a verified Noir claim settle
   assert.equal(store.request(failed.id)?.status,'payment_failed');
   assert.equal(store.committed(r.projectId),total-failed.amount);
  }finally{store.close();}
+});
+
+
+test('deployment migration rejects stale checks and keeps earlier operations on their own contracts',()=>{
+ assert.equal(sameContracts(LEGACY_CONTRACTS),false);
+ assert.equal(sameContracts(EVENT_CONTRACTS),true);
+ assert.deepEqual(EVENT_CONTRACTS,SDK_TESTNET.contracts);
+ assert.deepEqual(paymentContracts({}),LEGACY_CONTRACTS);
+ assert.deepEqual(paymentContracts({contracts:EVENT_CONTRACTS}),EVENT_CONTRACTS);
+ assert.throws(()=>paymentContracts({contracts:{paymentEscrow:EVENT_CONTRACTS.paymentEscrow}}),/Unknown/);
+ assert.equal(currentContractChecks({contracts:Object.entries(LEGACY_CONTRACTS).map(([name,address])=>({name,address,exists:true})),escrow:'99999999999'}),false);
+ assert.equal(currentContractChecks({contracts:Object.entries(EVENT_CONTRACTS).map(([name,address])=>({name,address,exists:true}))}),true);
+ const merchant=Keypair.random().publicKey();
+ const oldClaim=event(LEGACY_CONTRACTS.paymentEscrow,merchant,100n);
+ assert.equal(matchesMerchantClaim([oldClaim],merchant,100),false);
+ assert.equal(matchesMerchantClaim([oldClaim],merchant,100,LEGACY_CONTRACTS.paymentEscrow),true);
 });

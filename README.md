@@ -10,7 +10,7 @@ An automated spending desk for managers and their teams: Koa helps set up budget
 
 **Team:** BackSlashN — Leon Angelo Cañelas (@angelord1007), Ace Lance Benegas (@lanceace0682), Irvin John Parulan (@enerbonn), Eduardo Constantino III (@imnotward_.)
 
-> **Submission check:** The [Nov 7 builder handbook](https://docs.google.com/document/d/1FQWX8ICFFuuJHF-2JcQBoLOWOj8aXKEZ7rhQvQv5DK0/edit) lists newer Noir contracts than the earlier registration form used by this build. The recorded demo and proof below use the earlier deployment. This mismatch needs organizer confirmation or a tested migration before claiming compliance with the updated contract requirement. See [contract details](docs/HACKATHON.md).
+> **Contract update:** New payments use the Noir deployment listed in the Nov 7 handbook. Existing owners must register/authorize and fund the updated deployment, and allow its escrow in Velo Gas Station. Earlier receipts remain historical proof; old escrow balances do not move automatically. [Migration steps](docs/HACKATHON.md#existing-wallets-after-the-update).
 
 ## Problem
 
@@ -65,24 +65,26 @@ The server stores accounts, hashed credentials, sessions, chats, reviewed contex
 
 - SDK: **`@noirx402/agent-sdk` 0.3.0** (locked in `package-lock.json`).
 - Calls all three contracts: `device_registry` for ownership, `agent_registry` for authority, and `payment_escrow` for funding, authorization and claim.
-- [Configured contract IDs](server/testnet.ts#L13), [Noir client](server/testnet.ts#L92), [owner operation preparation](server/testnet.ts#L312), [merchant claim and receipt verification](server/testnet.ts#L192), [agent payment preparation](server/testnet.ts#L388).
+- [Configured contract IDs](server/testnet.ts#L15), [Noir client](server/testnet.ts#L109), [owner operation preparation](server/testnet.ts#L333), [merchant claim and receipt verification](server/testnet.ts#L213), [agent payment preparation](server/testnet.ts#L410).
 - Uses SDK `prepare` with `registerDevice`, `registerAgent`, `fundEscrow`, `defundEscrow`, `authorize` and `claim` operations; `submit` and the SDK's RPC client confirm results. See [full implementation](server/testnet.ts) and [adapter preflight/checkPayment](server/testnet-adapter.ts).
-- Current code explicitly overrides SDK defaults with the earlier registration-form IDs. **It does not yet use the newer handbook IDs.** [Compare the deployments](docs/HACKATHON.md).
+- Current contract IDs match the installed SDK defaults and the Nov 7 handbook. Earlier pending operations retain their original deployment for reconciliation. [Deployment and migration details](docs/HACKATHON.md).
 
 ## Velo integration
 
 - SDK: **`@carts1024/velo-sdk` 0.1.0-alpha.4**.
-- Velo Gas covers network fees, submits signed Testnet authorizations and provides tracking/recovery status. [Sponsorship and submission](server/testnet.ts#L390), [status reconciliation](server/testnet.ts#L237), [adapter](server/testnet-adapter.ts#L41).
+- Velo Gas covers network fees, submits signed Testnet authorizations and provides tracking/recovery status. [Sponsorship and submission](server/testnet.ts#L412), [status reconciliation](server/testnet.ts#L258), [adapter](server/testnet-adapter.ts#L41).
 - Owners save their project URL/ID and scoped Testnet Gas key through Connections. Secrets remain on the backend.
 - This integration uses Gas sponsorship/status. It does **not** claim to implement Velo checkout sessions or signed checkout webhooks.
 
 ## Testnet proof
 
-[Successful demo merchant claim on Stellar Expert](https://stellar.expert/explorer/testnet/tx/07a60ffafbac3ffcc3ea030fda38cb3fbaf9775b6bf2d0d8f932873362730199)
+**Current handbook deployment:** [Confirmed 1 XLM recipient claim](https://stellar.expert/explorer/testnet/tx/3e1fd95eda8900b870097abc34cd2ccd74baca853d5a7ce6a7e03bd218daf68f).
 
-Transaction hash: `07a60ffafbac3ffcc3ea030fda38cb3fbaf9775b6bf2d0d8f932873362730199`.
+Hash: `3e1fd95eda8900b870097abc34cd2ccd74baca853d5a7ce6a7e03bd218daf68f`.
 
-The demo records request assessment, payment authorization, recipient claim and the saved receipt. The supplied explorer capture shows a successful claim on the earlier escrow contract. Horizon also returned `successful: true` at ledger `5599104` during this submission check. Testnet may reset; this historical proof does not establish that the newer handbook contracts have been tested.
+A fresh SDK-only Testnet check registered a device, authorized an agent, deposited 5 XLM, authorized/claimed 1 XLM and withdrew the remaining 4 XLM on the current contracts. The app's receipt verifier checked the exact escrow, recipient and amount. [Public operation hashes and verification scope](docs/noir-migration-proof.json). This probe did not exercise Gemini, browser signing or Velo sponsorship; repeat the complete application flow after updating your Velo allowlist.
+
+**Historical application demo:** [Original Velo/Noir merchant claim](https://stellar.expert/explorer/testnet/tx/07a60ffafbac3ffcc3ea030fda38cb3fbaf9775b6bf2d0d8f932873362730199). The video shows the earlier deployment's request assessment, authorization and saved receipt. Horizon confirmed that historical transaction at ledger `5599104`. Earlier proof is retained as history, not relabeled as a payment on the updated contracts. Testnet may reset.
 
 ## Repo structure
 
@@ -122,7 +124,7 @@ Workspace folders keep the existing working source layout. Shared business types
    ```
 
 5. Open http://127.0.0.1:4310. Choose **Business owner → Sign up**. Enter name, email and password. Review/save the suggested policy, add a member and issue their code, create a project and assign a task. Fresh clones have no hosted accounts or wallet keys.
-6. Open **Connections → Test connection** for Gemini. Then follow the [wallet / Noir / Velo tutorial](docs/HACKATHON.md#wallet-and-testnet-tutorial-on-windows). Do not use real funds. Verify contract compatibility before funding.
+6. Open **Connections → Test connection** for Gemini. Then follow the [wallet / Noir / Velo tutorial](docs/HACKATHON.md#wallet-and-testnet-tutorial-on-windows). Do not use real funds. Use the current escrow address in your Velo Gas allowlist.
 7. Sign out and choose **Team member**. Use their saved email and owner-issued code. Ask Koa for a draft or use **New request**, preview, submit, and inspect the decision and confirmed receipt.
 
 Development: `npm run dev`. Verification: `npm test` and `npm run build`. The optional Postgres integration test requires its documented test database and is skipped without it. Automated tests do not replace a live wallet-signing/payment test. [AI setup](docs/AI-SETUP.md) · [Online setup in order](docs/DEPLOY.md).
@@ -155,7 +157,7 @@ The [two-minute video](https://drive.google.com/file/d/1tlFxvj1F-1QsxQIXswPSQs8v
 
 ## What's next
 
-- Resolve the updated handbook contract IDs with the organizers, migrate and repeat the complete payment test if required.
+- Repeat the complete browser/Gemini/Velo-sponsored purchase flow on the updated deployment after owner setup.
 - Production payment-provider/off-ramp integration, normalized database scaling, email verification/recovery and stronger production account controls.
 - This is a Testnet hackathon prototype. Render Free may cold-start and Supabase/Gemini free plans have quotas; the laptop is not required for the hosted Gemini path.
 
