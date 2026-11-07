@@ -22,7 +22,17 @@ Owners define members, roles, assigned work, project budgets, spending categorie
 
 Members can submit a form or ask **Koa Purchase Assistant** to prepare an editable request preview. Clear eligible purchases can proceed automatically when the owner enables automation; uncertain suppliers or incomplete details go to owner review, while clearly unrelated purchases are declined. Server-side identity, budget and payment checks remain mandatory.
 
-**Explore the shared Testnet demo:** choose **Business owner → Sign in**, email `owner1@email.com`, password `password`. This is an intentionally public demo login, not a deployment secret. Please do not overwrite its rules, reset access, or add personal information. To experiment freely, choose **Sign up** and create your own isolated owner workspace. Members have sign-in only; their owner creates their profile and issues an access code. A fresh local clone does not contain the hosted demo account.
+**Explore the shared Testnet demo:** open [KoaSpend](https://koaspend-kappa.vercel.app) and choose the matching role, then **Sign in**.
+
+| Role | Email | Password or private access code |
+| --- | --- | --- |
+| Business owner | `owner1@email.com` | Password: `password` |
+| Team member | `member@example.com` | Private code: `allowance_kcL1w7spIwwQCL_DGG4Acgou` |
+
+These are intentionally public **Testnet demo accounts**. Please preserve the shared setup, avoid resetting access, and do not add personal information.
+
+**Prefer your own workspace?** Choose **Business owner → Sign up** and create an account with your name, email and password. Review your policy, connect your own Testnet wallet, add members and assign their budgets/tasks. Members do not sign up themselves: their owner saves their email and issues a private access code. A fresh local clone does not include these hosted demo accounts.
+
 
 ## How the agentic payment works
 
