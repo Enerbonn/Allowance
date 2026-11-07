@@ -1,5 +1,5 @@
 import React,{useEffect,useState,useRef} from 'react';
-import {KeyRound,Plus,Sparkles,ShieldCheck,Save,X,Copy,Trash2,LogIn,Users,LoaderCircle,ArrowLeft,ChevronRight} from 'lucide-react';
+import {Eye,EyeOff,KeyRound,Plus,Sparkles,ShieldCheck,Save,X,Copy,Trash2,LogIn,Users,LoaderCircle,ArrowLeft,ChevronRight} from 'lucide-react';
 import './workspace.css';
 const fmt=(v:number)=>new Intl.NumberFormat('en',{maximumFractionDigits:7}).format(v/1e7);
 async function api(path:string,init:RequestInit={}){const r=await fetch('/api'+path,{...init,headers:{'content-type':'application/json','x-allowance-client':'local-prototype'}});const v=await r.json();if(!r.ok)throw new Error(v.error||'Please try again.');return v;}
@@ -15,6 +15,8 @@ export function SignIn({ ready }: { ready: (role: AccessRole) => Promise<void> }
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
+  const [showCode, setShowCode] = useState(false);
+  const credentialLabel = role === 'owner' ? 'Password' : 'Access code';
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const setup = role === 'owner' && mode === 'signup';
@@ -51,36 +53,43 @@ export function SignIn({ ready }: { ready: (role: AccessRole) => Promise<void> }
   }
 
   if (!role) return <section className="signin-panel" aria-labelledby="access-heading">
-    <span className="access-symbol"><KeyRound size={25}/></span>
-    <h2 id="access-heading">Choose how to enter</h2>
-    <p>Open your business workspace or sign in to request a purchase.</p>
+    <h2 id="access-heading">Select account</h2>
+    <p>Select a profile to continue.</p>
     <div className="role-options">
       <button className="secondary-btn role-option" type="button" onClick={() => void choose('owner')}>
-        <ShieldCheck size={22} aria-hidden="true"/><span><strong>Business owner</strong><small>Create a workspace or manage your team and wallet.</small></span><ChevronRight size={17} aria-hidden="true"/>
+        <span className="role-icon"><ShieldCheck size={22} aria-hidden="true"/></span><span><strong>Business owner</strong><small>Create a workspace and manage your team.</small></span><ChevronRight size={17} aria-hidden="true"/>
       </button>
       <button className="secondary-btn role-option" type="button" onClick={() => void choose('member')}>
-        <Users size={22} aria-hidden="true"/><span><strong>Team member</strong><small>Sign in with the email and private code your owner has on file.</small></span><ChevronRight size={17} aria-hidden="true"/>
+        <span className="role-icon"><Users size={22} aria-hidden="true"/></span><span><strong>Team member</strong><small>Sign in with the email and access code your owner gave you.</small></span><ChevronRight size={17} aria-hidden="true"/>
       </button>
     </div>
   </section>;
 
   return <form className="signin-panel" onSubmit={e => { e.preventDefault(); void enter(); }}>
-    <button className="text-btn role-back" type="button" disabled={busy} onClick={() => { setRole(null); setCode(''); setEmail(''); setError(''); }}><ArrowLeft size={16}/>Choose a role</button>
+    <button className="text-btn role-back" type="button" disabled={busy} onClick={() => { setRole(null); setCode(''); setShowCode(false); setEmail(''); setError(''); }}><ArrowLeft size={16}/>Choose a role</button>
     <h2>{setup ? 'Create your owner account' : migrate ? 'Set your owner sign-in email' : role === 'owner' ? 'Sign in as business owner' : 'Sign in as team member'}</h2>
-    {!status && busy && <p role="status">Checking workspace access…</p>}
-    {role === 'owner' && <div className="owner-access-options" role="group" aria-label="Owner access">
-      {(['signin', 'signup'] as const).map(option => <button key={option} type="button" className={mode === option ? 'primary-btn' : 'secondary-btn'} aria-pressed={mode === option} disabled={busy} onClick={() => { setMode(option); setCode(''); setError(''); }}>{option === 'signin' ? 'Sign in' : 'Sign up'}</button>)}
-    </div>}
-    {status && <>
-      {!setup && !migrate && status.sessionRole === role && <button className="secondary-btn" type="button" disabled={busy} onClick={() => void enter(true)}>Continue existing session</button>}
-      <p>{setup ? 'Enter your name and email, then choose a password.' : migrate ? 'Enter your current owner code once to add your email.' : role === 'owner' ? 'Enter your email and password.' : 'Use the email and private access code your owner gave you.'}</p>
-      {role === 'owner' && mode === 'signin' && status.ownerNeedsEmail && <button className="text-btn" type="button" disabled={busy} onClick={() => { setMode('email'); setError(''); }}>Add an email to an older owner account</button>}
-      {setup && <label>Your name<input autoComplete="name" required minLength={2} maxLength={80} value={name} onChange={e => setName(e.target.value)}/></label>}
-      <label>Email<input type="email" autoComplete="username" required maxLength={254} value={email} onChange={e => setEmail(e.target.value)}/></label>
-      <label>{role === 'owner' ? 'Password' : 'Private access code'}<input type="password" autoComplete={setup ? 'new-password' : 'current-password'} required minLength={setup || migrate ? 8 : 1} maxLength={128} value={code} onChange={e => setCode(e.target.value)} placeholder={setup ? 'At least 8 characters' : undefined}/></label>
-      <button disabled={busy} className="primary-btn">{busy ? <LoaderCircle className="spin" size={16}/> : <LogIn size={16}/>} {setup ? 'Create account' : migrate ? 'Save email and sign in' : 'Sign in'}</button>
-    </>}
-    {error && <p role="alert" className="form-error">{error}</p>}
+    <div className="auth-form-card">
+      {!status && busy && <p role="status">Checking workspace access…</p>}
+      {role === 'owner' && <div className="owner-access-options" role="group" aria-label="Owner access">
+        {(['signin', 'signup'] as const).map(option => <button key={option} type="button" className={mode === option ? 'primary-btn' : 'secondary-btn'} aria-pressed={mode === option} disabled={busy} onClick={() => { setMode(option); setCode(''); setShowCode(false); setError(''); }}>{option === 'signin' ? 'Sign in' : 'Sign up'}</button>)}
+      </div>}
+      {status && <>
+        {!setup && !migrate && status.sessionRole === role && <button className="secondary-btn" type="button" disabled={busy} onClick={() => void enter(true)}>Continue existing session</button>}
+        <p>{setup ? 'Enter your name and email, then choose a password.' : migrate ? 'Enter your current owner code once to add your email.' : role === 'owner' ? 'Enter your email and password.' : 'Use the email and private access code your owner gave you.'}</p>
+        {role === 'owner' && mode === 'signin' && status.ownerNeedsEmail && <button className="text-btn" type="button" disabled={busy} onClick={() => { setMode('email'); setError(''); }}>Add an email to an older owner account</button>}
+        {setup && <label>Your name<input autoComplete="name" required minLength={2} maxLength={80} value={name} onChange={e => setName(e.target.value)}/></label>}
+        <label>Email<input type="email" autoComplete="username" required maxLength={254} value={email} onChange={e => setEmail(e.target.value)}/></label>
+        <label htmlFor="signin-credential">{credentialLabel}</label>
+        <div className="signin-credential">
+          <input id="signin-credential" type={showCode ? 'text' : 'password'} autoComplete={setup ? 'new-password' : 'current-password'} required minLength={setup || migrate ? 8 : 1} maxLength={128} value={code} onChange={e => setCode(e.target.value)} placeholder={setup ? 'At least 8 characters' : undefined}/>
+          <button type="button" aria-label={showCode ? 'Hide ' + credentialLabel.toLowerCase() : 'Show ' + credentialLabel.toLowerCase()} aria-pressed={showCode} onClick={() => setShowCode(value => !value)}>
+            {showCode ? <EyeOff size={18} aria-hidden="true"/> : <Eye size={18} aria-hidden="true"/>}
+          </button>
+        </div>
+        <button disabled={busy} className="primary-btn">{busy ? <LoaderCircle className="spin" size={16}/> : <LogIn size={16}/>} {setup ? 'Create account' : migrate ? 'Save email and sign in' : 'Sign in'}</button>
+      </>}
+      {error && <p role="alert" className="form-error">{error}</p>}
+    </div>
   </form>;
 }
 

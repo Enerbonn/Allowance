@@ -1,0 +1,185 @@
+:root {
+  --ink: #0c223a;
+  --paper: #f3f7fd;
+  --slate: #48627c;
+  --border: #d3e0ef;
+  --soft: #eaf2fc;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.koaspend-brand img { width: 40px; height: 40px; object-fit: contain; flex: none; }
+.sidebar .koaspend-brand { padding-inline: 7px; color: #edf4ff; }
+.sidebar nav button.active { background: #e2edff; color: var(--ink); }
+
+.welcome {
+  grid-template-columns: 54% 46%;
+  min-height: 100dvh;
+  background: #fff;
+  font-family: Inter, 'Segoe UI', sans-serif;
+}
+.welcome .koaspend-art {
+  justify-content: flex-start;
+  min-height: 100%;
+  padding: clamp(24px, 4vw, 52px);
+  background: linear-gradient(180deg, #0c223a 25%, #245e9e 100%);
+  color: #edf4ff;
+}
+.koaspend-hero {
+  display: flex;
+  align-items: center;
+  gap: clamp(6px, 2vw, 30px);
+  width: 100%;
+  max-width: 740px;
+  margin: auto;
+  border-bottom: 1px solid #91abc6;
+}
+.koaspend-hero img {
+  display: block;
+  width: 42%;
+  height: auto;
+  margin-bottom: -16px;
+  object-fit: contain;
+  flex: none;
+}
+.welcome .koaspend-hero h1 {
+  margin: 0 0 14px;
+  font-size: clamp(27px, 4.15vw, 58px);
+  font-weight: 750;
+  line-height: 1.15;
+  letter-spacing: -.035em;
+}
+.koaspend-hero h1 span { color: #a9dcff; }
+.welcome .welcome-form {
+  max-width: 535px;
+  padding: clamp(20px, 4vw, 56px);
+}
+.welcome .signin-panel {
+  gap: 16px;
+  width: 100%;
+  max-width: none;
+  padding: clamp(22px, 3vw, 36px);
+  border-radius: 16px;
+  background: #0c223a;
+  color: #edf4ff;
+  box-shadow: 0 5px 16px #0c223a26;
+}
+.welcome .signin-panel h2 { font-size: clamp(23px, 2.5vw, 32px); line-height: 1.18; letter-spacing: -.035em; }
+.welcome .signin-panel > p,
+.welcome .role-back { color: #d9eaff; }
+.welcome .role-back { padding-inline: 0; margin-block: -8px; }
+.welcome .role-option { background: #fff; color: var(--ink); border-radius: 12px; }
+.welcome .role-option:hover { background: #e2edff; }
+.welcome .role-option .role-icon {
+  display: grid;
+  flex: 0 0 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 8px;
+  background: #cbe4ff;
+  color: #163452;
+}
+.welcome .role-option > svg { color: #245e9e; }
+.welcome .auth-form-card {
+  display: grid;
+  gap: 13px;
+  padding: clamp(16px, 2vw, 24px);
+  border-radius: 14px;
+  background: white;
+  color: var(--ink);
+}
+.auth-form-card > p { font-size: 13px; color: var(--slate); }
+.auth-form-card > .form-error { color: var(--red); }
+.auth-form-card > label[for="signin-credential"] { margin-bottom: -7px; }
+.signin-credential { position: relative; }
+.welcome .signin-credential input { padding-right: 49px; }
+.signin-credential button {
+  position: absolute;
+  inset: 0 0 0 auto;
+  display: grid;
+  width: 44px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: #345b88;
+}
+.welcome .signin-panel :is(input, button) { min-height: 44px; }
+.welcome .auth-form-card .owner-access-options { margin: 0; }
+
+@media (max-width: 899px) {
+  .welcome { grid-template-columns: 1fr; align-content: start; }
+  .welcome .koaspend-art { min-height: auto; padding: 20px 24px 28px; }
+  .koaspend-hero { max-width: 425px; margin-top: 14px; }
+  .koaspend-hero img { width: 29%; margin-bottom: -10px; }
+  .welcome .koaspend-hero h1 { font-size: clamp(23px, 4.5vw, 37px); }
+}
+
+/* Owner and member layouts adapted from KoaSpend’s ui-integration branch. */
+.shell { background: var(--paper); }
+.shell .sidebar { color: #edf4ff; }
+.shell .sidebar-brand-row { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin: 0 0 24px; }
+.shell .sidebar-brand-row .brand { padding: 0; }
+.shell .sidebar-brand-row .brand strong { font-size: 22px; letter-spacing: -.8px; }
+.shell .sidebar-brand-row .icon-btn { color: inherit; }
+.shell .nav-label { color: #adc3dd; }
+.shell .sidebar nav button:not(.active),
+.shell .sidebar .bottom-link,
+.shell .sidebar .profile { color: #edf4ff; }
+.shell .sidebar nav button:not(.active):hover,
+.shell .sidebar :is(.bottom-link, .profile):hover { background: #1c4065; }
+.shell .sidebar :is(.allowance-note, .profile) { border-color: #304d6b; }
+.shell .sidebar :is(.allowance-note p, .profile small) { color: #bfd1e9; }
+.shell .sidebar .allowance-note button { color: #b7d8ff; }
+.shell .sidebar .small-symbol { background: #193b5a; color: #bfdbff; }
+.shell .sidebar :is(.nav-count, .profile .avatar) { background: #dceaff; color: #1b426d; }
+.shell .sidebar nav button[aria-current="page"] { background: #e2edff; color: #183e69; }
+.workspace-more > summary { color: #bfd1e9; cursor: pointer; padding: 13px; font-size: 12px; }
+.workspace-more[open] > button { padding-inline-start: 23px; }
+.workspace-nav-backdrop { display: none; }
+.shell .topbar { background: #edf4ff; }
+.shell .prototype-strip { background: #e4eefb; color: #34516f; }
+.shell .prototype-strip :is(p, button) { color: inherit; }
+.shell .prototype-strip .live-dot { background: #286e52; }
+.shell :is(.primary-btn, .secondary-btn) { min-height: 44px; }
+.primary-btn:hover:not(:disabled) { background: #173b63; }
+.secondary-btn { border-color: #b9cde5; color: #204264; }
+.secondary-btn:hover:not(:disabled) { background: #e2edff; }
+.shell .text-btn { color: #244f7a; }
+.shell .stat-row > div { border-color: var(--border); }
+.shell .stat-icon { background: #e2edff; color: #315d8c; }
+.shell .stat-row small { color: var(--slate); }
+.owner-dashboard :is(.overview-band, .owner-setup, .spending-monitor-grid > div, .request-table) {
+  background: #edf4ff;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+}
+.owner-dashboard .overview-band { min-height: 150px; box-shadow: 0 3px 0 #d3e0ef; }
+.owner-dashboard .budget-track { border-color: var(--border); }
+.owner-dashboard .request-table { overflow: hidden; }
+.owner-dashboard .request-row { padding-inline: 13px; }
+.owner-dashboard .project-card { background: #e2edff; border-color: var(--border); color: var(--ink); }
+.owner-dashboard .project-card:hover { background: #d5e6ff; }
+.owner-dashboard .project-card p { color: var(--slate); }
+.owner-dashboard :is(.budget-track, .project-card) .progress { background: #c7d9ef; }
+.owner-dashboard :is(.budget-track, .project-card) .progress span { background: #315d8c; }
+.owner-dashboard .setup-group progress { accent-color: #315d8c; }
+.shell .request-row:hover { background: #e8f0fb; }
+.shell .request-row.selected { background: #e2edff; box-shadow: inset 3px 0 0 #315d8c; }
+.member-dashboard { --paper: #f5faf7; --slate: #486256; --border: #d2dfd8; }
+.member-dashboard .topbar { background: #fff; }
+.member-dashboard .prototype-strip { background: #e8f0ec; color: #365448; }
+.member-dashboard .overview-band { background: #fff; border-color: var(--border); }
+
+@media (max-width: 760px) {
+  .workspace-nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 29;
+    border: 0;
+    background: #06172a80;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shell .sidebar { transition: none; }
+}

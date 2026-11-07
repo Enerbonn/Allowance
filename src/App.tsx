@@ -3,6 +3,8 @@ import { ArrowUpRight, ArrowRight, ArrowDownToLine, Plus, Search, X, Check, Chev
 import '@fontsource-variable/manrope';
 import './style.css';
 import './responsive-fixes.css';
+import './koaspend.css';
+import { Brand, AuthBrandingPanel } from './Brand';
 import {SignIn,TeamConsole,AgentMemory,ProposalCard} from './Workspace';
 import {TestnetPanel, getTestnetStatus, type TestnetStatus, type PaymentStep} from './Testnet';
 import {OwnerSetup, type SetupAction} from './OwnerSetup';
@@ -21,7 +23,7 @@ async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
   const r = await fetch(`/api${path}`, { ...init, headers: { 'content-type': 'application/json', 'x-allowance-client': 'local-prototype', ...init.headers } });
   const data = await r.json(); if (!r.ok) throw new Error(data.error || 'Something went wrong. Try again.'); return data;
 }
-function Avatar({ person, small = false }: { person?: Person; small?: boolean }) { return <span className={`avatar ${small ? 'small' : ''} ${person?.id || ''}`}>{person?.initials || 'AL'}</span>; }
+function Avatar({ person, small = false }: { person?: Person; small?: boolean }) { return <span className={`avatar ${small ? 'small' : ''} ${person?.id || ''}`}>{person?.initials || 'KS'}</span>; }
 function Badge({ status, mode }: { status: string; mode?: string }) { return <span className={`badge ${status}`}>{status === 'analyzing' ? <LoaderCircle size={12} className="spin"/> : status === 'paid' ? <Check size={12}/> : status === 'blocked' ? <LockKeyhole size={11}/> : <span className="badge-dot"/>}{status==='paid'?(mode==='testnet'?'Paid on Testnet':'Paid in demo'):(statusLabels[status] || status)}</span>; }
 function Modal({ title, subtitle, onClose, children, wide = false }: { title: string; subtitle?: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -115,7 +117,19 @@ function App() {
   const assistantLabel = owner ? 'Workspace Assistant' : 'Purchase Assistant';
   const setupAssistant = owner && route.setupAssistant;
   const assistantTitle = setupAssistant ? 'Workspace Setup Assistant' : assistantLabel;
-  const nav = [{ name: 'Overview', icon: LayoutDashboard }, { name: 'Requests', icon: FileText }, { name: 'Assistant', icon: MessageSquare }, { name: 'Projects', icon: Layers3 }, { name: 'Team', icon: Users }, { name: 'Spending policy', icon: SlidersHorizontal }, { name: 'Activity', icon: Activity }, { name: 'Saved notes', icon: Sparkles }] as const;
+  const primaryNav = [
+    { name: 'Overview', icon: LayoutDashboard },
+    { name: 'Requests', icon: FileText },
+    { name: 'Assistant', icon: MessageSquare },
+    { name: 'Projects', icon: Layers3 },
+  ] as const;
+  const workspaceNav = [
+    { name: 'Team', icon: Users },
+    { name: 'Spending policy', icon: SlidersHorizontal },
+    { name: 'Activity', icon: Activity },
+    { name: 'Saved notes', icon: Sparkles },
+  ] as const;
+  const connectionsNav = { name: 'Connections', icon: Settings } as const;
   const project = data?.projects.find(p => p.id === projectId);
   const request = data?.requests.find(r => r.id === selected && (!projectId || (project && r.projectId === projectId)));
   const reviewCount = data?.requests.filter(r => r.status === 'needs_review').length || 0;
@@ -160,16 +174,72 @@ function App() {
 
   if (checkingSession) return <main className="loading-page" role="status"><LoaderCircle size={22} className="spin" aria-hidden="true"/>Opening your workspace…</main>;
 
-  if (!data) return <div className="welcome"><div className="welcome-art"><Brand/><div><span className="line-art"><ShieldCheck size={90} strokeWidth={1}/></span><h1>Good work<br/>shouldn’t wait.</h1><p>Give your team room to move.<br/>Keep every purchase within reach.</p></div><span>Private member access · Local prototype</span></div><main className="welcome-form" id="main"><SignIn ready={enter}/></main></div>;
+  if (!data) return <div className="welcome">
+    <AuthBrandingPanel />
+    <main className="welcome-form" id="main"><SignIn ready={enter}/></main>
+  </div>;
 
-  return <><a className="skip-link" href="#main">Skip to main content</a><div className={`shell ${request ? 'has-detail' : ''}`}>
-    <aside className={`sidebar ${mobileNav ? 'open' : ''}`}><Brand/><button className="workspace-switch" onClick={() => setModal('identity')}><span className="workspace-logo">N</span><span>Team workspace<small>Local prototype</small></span><ChevronDown size={14}/></button><div className="nav-label">Workspace</div><nav aria-label="Main navigation">{nav.map(({ name, icon: Icon }) => <button key={name} aria-current={page === name ? 'page' : undefined} className={page === name ? 'active' : ''} onClick={() => navigate(name)}><Icon size={18}/><span>{name === 'Assistant' ? assistantLabel : name}</span>{name === 'Requests' && reviewCount > 0 && <span className="nav-count">{reviewCount}</span>}</button>)}</nav><div className="sidebar-bottom"><div className="allowance-note"><span className="small-symbol"><ShieldCheck size={17}/></span><strong>Clear rules. More freedom.</strong><p>Your team gets the resources.<br/>You keep the oversight.</p><button onClick={() => navigate('Spending policy')}>View spending policy <ArrowUpRight size={14}/></button></div><button className={page === 'Connections' ? 'bottom-link active' : 'bottom-link'} onClick={() => navigate('Connections')}><Settings size={18}/>Connections</button><button className="bottom-link" onClick={() => setModal('help')}><CircleHelp size={18}/>How it works</button><button className="profile" onClick={() => setModal('identity')}><Avatar person={data.person} small/><span>{data.person.name}<small>{owner ? 'Owner view' : 'Team member view'}</small></span><ChevronDown size={14}/></button></div></aside>
-    <div className="app-body"><header className="topbar"><div className="breadcrumbs"><button className="icon-btn mobile-menu" aria-label="Toggle navigation" onClick={() => setMobileNav(!mobileNav)}><Menu size={20}/></button><span>Workspace</span><ChevronRight size={13}/><strong>{page === 'Assistant' ? assistantTitle : page}</strong></div><div className="top-actions"><div className="search-box"><Search size={15}/><input id="global-search" aria-label="Search requests" placeholder="Search requests…" value={search} onChange={e => { if (page !== 'Requests') navigate('Requests'); setSearch(e.target.value); }}/><kbd>Ctrl K</kbd></div><span className="local-label"><CircleDot size={12}/>Local prototype</span></div></header>
+  function renderNavItem({ name, icon: Icon }: typeof primaryNav[number] | typeof workspaceNav[number] | typeof connectionsNav) {
+    return <button key={name} aria-current={page === name ? 'page' : undefined} className={page === name ? 'active' : ''} onClick={() => navigate(name)}>
+      <Icon size={18} aria-hidden="true"/>
+      <span>{name === 'Assistant' ? assistantLabel : name}</span>
+      {name === 'Requests' && reviewCount > 0 && <span className="nav-count">{reviewCount}</span>}
+    </button>;
+  }
+
+  return <><a className="skip-link" href="#main">Skip to main content</a><div className={`shell ${owner ? 'owner-dashboard' : 'member-dashboard'} ${request ? 'has-detail' : ''}`}>
+    {mobileNav && <button type="button" className="workspace-nav-backdrop" aria-label="Close navigation" onClick={() => setMobileNav(false)}/>}
+    <aside id="workspace-navigation" className={`sidebar ${mobileNav ? 'open' : ''}`}>
+      <div className="sidebar-brand-row">
+        <Brand/>
+        <button className="icon-btn mobile-menu" aria-label="Close navigation" onClick={() => { setMobileNav(false); document.getElementById('workspace-menu')?.focus(); }}><X size={20}/></button>
+      </div>
+      <div className="nav-label">Workspace</div>
+      <nav aria-label={owner ? 'Main navigation' : 'Member navigation'}>
+        {primaryNav.map(renderNavItem)}
+        {owner && workspaceNav.map(renderNavItem)}
+        {owner && renderNavItem(connectionsNav)}
+        {!owner && <details className="workspace-more" open={page === 'Connections' || workspaceNav.some(item => item.name === page)}>
+          <summary>More workspace tools</summary>
+          {workspaceNav.map(renderNavItem)}
+          {renderNavItem(connectionsNav)}
+        </details>}
+      </nav>
+      <div className="sidebar-bottom">
+        {!owner && <div className="allowance-note">
+          <span className="small-symbol"><ShieldCheck size={17}/></span>
+          <strong>Clear rules. More freedom.</strong>
+          <p>See what you can spend and follow each request to its receipt.</p>
+          <button onClick={() => navigate('Spending policy')}>View spending policy <ArrowUpRight size={14}/></button>
+        </div>}
+        <button className="bottom-link" onClick={() => setModal('help')}><CircleHelp size={18}/>How it works</button>
+        <button className="profile" onClick={() => setModal('identity')}>
+          <Avatar person={data.person} small/>
+          <span>{data.person.name}<small>{owner ? 'Business owner' : 'Team member'}</small></span>
+          <ChevronDown size={14} aria-hidden="true"/>
+        </button>
+      </div>
+    </aside>
+    <div className="app-body"><header className="topbar">
+      <div className="breadcrumbs">
+        <button id="workspace-menu" className="icon-btn mobile-menu" aria-label="Toggle navigation" aria-expanded={mobileNav} aria-controls="workspace-navigation" onClick={() => setMobileNav(!mobileNav)}><Menu size={20}/></button>
+        <span>Workspace</span><ChevronRight size={13} aria-hidden="true"/>
+        <strong>{page === 'Assistant' ? assistantTitle : page}</strong>
+      </div>
+      <div className="top-actions">
+        <div className="search-box" role="search">
+          <Search size={15} aria-hidden="true"/>
+          <input id="global-search" aria-label="Search requests" placeholder="Search requests…" value={search} onChange={e => { if (page !== 'Requests') navigate('Requests'); setSearch(e.target.value); }}/>
+          <kbd>Ctrl K</kbd>
+        </div>
+        <span className="local-label"><CircleDot size={12} aria-hidden="true"/>Stellar Testnet</span>
+      </div>
+    </header>
     <div className="prototype-strip"><span><span className="live-dot"/>{data.integrations.sampleWorkspace ? 'Sample workspace' : 'Your workspace'}</span><p>{data.integrations.sampleWorkspace ? 'Sample records. Spending follows the workspace rules.' : 'Eligible purchases can proceed within the rules you set.'}</p><button onClick={() => navigate('Connections')}>Connection status <ArrowUpRight size={12}/></button></div>
     {error && <div role="alert" className="error-banner floating-error"><CircleAlert size={18}/><span>{error}</span><button className="icon-btn" onClick={() => setError('')} aria-label="Dismiss error"><X size={16}/></button></div>}
     <div className="workspace-body"><main className="main-content" id="main">
       {page === 'Overview' && <>
-        <div className="page-heading"><div><div className="greeting">{owner ? 'Your team’s spending, in perspective' : 'Everything you need to move forward'}</div><h1>{owner ? 'Spending overview' : `Hello, ${data.person.name.split(' ')[0]}.`}</h1><p>{owner ? 'Track requests, project budgets and payments.' : 'Ask for a work resource. We’ll check the details and keep you posted.'}</p></div><button className="primary-btn" onClick={() => { setDraft(null); if(owner)navigate('Assistant');else setModal('new'); }}><Plus size={17}/>{owner ? 'Ask your assistant' : 'New request'}</button></div>
+        <div className="page-heading"><div>{!owner && <div className="greeting">Everything you need to move forward</div>}<h1>{owner ? 'Spending overview' : `Hello, ${data.person.name.split(' ')[0]}.`}</h1><p>{owner ? 'Track requests, project budgets and payments.' : 'Ask for a work resource. We’ll check the details and keep you posted.'}</p></div><button className="primary-btn" onClick={() => { setDraft(null); if(owner)navigate('Assistant');else setModal('new'); }}><Plus size={17}/>{owner ? 'Ask your assistant' : 'New request'}</button></div>
         {owner && <OwnerSetup data={data} open={openSetup} ask={askForSetup}/>}
         <div className="overview-band"><div className="spend-total"><span>{owner ? 'Allocated to purchases' : 'Your purchase commitments'}</span><strong>{amount(totalSpent)} <small>XLM</small></strong><p><span className="subtle-dot"/>Stellar Testnet workspace</p></div>{owner && <div className="budget-track"><div><span>{amount(Math.max(0,totalBudget - totalSpent))} XLM available</span><span>{amount(totalBudget)} XLM allocated</span></div><div className="progress"><span style={{ width: `${Math.min(100, totalSpent / Math.max(totalBudget, 1) * 100)}%` }}/></div><p>Your approved project allowances, together.</p></div>}</div>
         <SpendingMonitor data={data} openEscrow={() => openSetup('escrow')}/>
@@ -179,7 +249,7 @@ function App() {
         <div className="section-head project-section"><div><h2>Projects</h2><p>Resources follow the work they support.</p></div><button className="text-btn" onClick={() => navigate('Projects')}>Projects <ArrowRight size={15}/></button></div><div className="project-grid">{data.projects.map((p, i) => <ProjectCard key={p.id} p={p} i={i} limit={data.policy.projectLimit} onClick={() => showProject(p.id)}/>)}</div>
         <div className="quiet-footer"><ShieldCheck size={14}/><span>Every purchase has a purpose, a policy, and a record.</span></div>
       </>}
-      {page === 'Requests' && <>{projectId && !project ? <p role="status">Project unavailable.</p> : selected && !request ? <p role="status">Request unavailable.</p> : null}<div className="page-heading"><div><h1>{project ? project.name + ' requests' : 'Requests'}</h1><p>From “I need this” to a clear decision.</p></div>{!owner && <button className="primary-btn" onClick={() => { setDraft(null); setModal('new'); }}><Plus size={17}/>New request</button>}</div><div className="filter-bar"><div className="tabs" role="group" aria-label="Request status">{[['all', 'All requests'], ['needs_review', 'Needs review'], ['paid', 'Completed'], ['blocked', 'Blocked']].map(([id, label]) => <button key={id} className={filter === id ? 'active' : ''} onClick={() => setFilter(id)}>{label}{id === 'needs_review' && <span>{reviewCount}</span>}</button>)}</div><select aria-label="Filter by project" value={projectFilter} onChange={e => e.target.value ? showProject(e.target.value) : navigate('Requests')}><option value="">All projects</option>{data.projects.map(p => <option value={p.id} key={p.id}>{p.name}</option>)}</select></div><RequestTable data={data} requests={data.requests.filter(r => (filter === 'all' || r.status === filter) && (!projectFilter || r.projectId === projectFilter) && `${r.title} ${r.id} ${r.purpose}`.toLowerCase().includes(search.toLowerCase()))} selected={selected} onSelect={id => showRequest(id, project?.id)}/></>}
+      {page === 'Requests' && <>{projectId && !project ? <p role="status">Project unavailable.</p> : selected && !request ? <p role="status">Request unavailable.</p> : null}<div className="page-heading"><div><h1>{project ? project.name + ' requests' : 'Requests'}</h1><p>{owner ? 'Review team purchases and track payments.' : 'Track your requests from submission to payment.'}</p></div>{!owner && <button className="primary-btn" onClick={() => { setDraft(null); setModal('new'); }}><Plus size={17}/>New request</button>}</div><div className="filter-bar"><div className="tabs" role="group" aria-label="Request status">{[['all', 'All requests'], ['needs_review', 'Needs review'], ['paid', 'Completed'], ['blocked', 'Blocked']].map(([id, label]) => <button key={id} className={filter === id ? 'active' : ''} onClick={() => setFilter(id)}>{label}{id === 'needs_review' && <span>{reviewCount}</span>}</button>)}</div><select aria-label="Filter by project" value={projectFilter} onChange={e => e.target.value ? showProject(e.target.value) : navigate('Requests')}><option value="">All projects</option>{data.projects.map(p => <option value={p.id} key={p.id}>{p.name}</option>)}</select></div><RequestTable data={data} requests={data.requests.filter(r => (filter === 'all' || r.status === filter) && (!projectFilter || r.projectId === projectFilter) && `${r.title} ${r.id} ${r.purpose}`.toLowerCase().includes(search.toLowerCase()))} selected={selected} onSelect={id => showRequest(id, project?.id)}/></>}
       {page === 'Assistant' && <AssistantPage data={data} title={assistantTitle} onDraft={d => { setDraft(d); setModal('new'); }} refresh={load} openSetup={openSetup} onHelp={() => setModal('help')} onRequest={id => { setSearch(''); setFilter('all'); showRequest(id); }}/> }
       {page === 'Projects' && <><div className="page-heading"><div><h1>Projects and allowances</h1><p>Keep resources connected to the work.</p></div>{owner && <button className="primary-btn" onClick={() => setModal('projects')}><Plus size={16}/>New project</button>}</div><div className="project-grid large">{data.projects.map((p, i) => <ProjectCard key={p.id} p={p} i={i} limit={data.policy.projectLimit} onClick={() => showProject(p.id)}/>)}</div><div className="section-head"><h2>Assigned work</h2>{owner && <button className="secondary-btn" onClick={() => setModal('tasks')}><Plus size={14}/>Assign task</button>}</div><div className="surface-list">{data.tasks.map(t => <div className="task-row" key={t.id}><span className="task-mark"><FolderOpen size={19}/></span><span><strong>{t.title}</strong><p>{t.description}</p><small>{data.projects.find(p => p.id === t.projectId)?.name}</small></span><Avatar person={data.people.find(p => p.id === t.assigneeId)}/></div>)}</div></>}
       {page === 'Team' && <TeamConsole data={data} refresh={load} add={()=>setModal('people')} ask={text=>{sessionStorage.setItem('assistant-prefill',text);navigate('Assistant');}}/>}
@@ -189,8 +259,8 @@ function App() {
       {page === 'Connections' && <><Connections data={data} busy={busy} test={() => run('ai', () => api('/ai/test', { method: 'POST' }), 'Assistant connection verified.')} />{owner&&<TestnetPanel data={data} focus={paymentStep} addSupplier={() => setModal('suppliers')}/>}</>}
     </main>{request && ['Overview', 'Requests'].includes(page) && <RequestDetail data={data} request={request} busy={busy} close={() => go(project ? projectRequestsPath(project.id) : pagePath('Requests'), true)} action={(a, note) => run('decision', () => api(`/requests/${request.id}/${request.mode==='testnet'&&a==='approve'?'testnet':'decision'}`, { method: 'POST', body: JSON.stringify({ action: a, note }) }), a === 'approve' ? (request.mode==='testnet'?'Testnet operation updated. Check settlement status.':'Testnet payments use the authorized wallet.') : 'Request declined.')} retry={() => run('review', () => api(`/requests/${request.id}/review`, { method: 'POST' }))} cancel={() => run('cancel', () => api(`/requests/${request.id}/cancel`, { method: 'POST' }), 'Request cancelled.')}/>}</div></div>
     {toast && <div className="toast" role="status"><CheckCircle2 size={18}/>{toast}<button aria-label="Dismiss notification" onClick={() => setToast('')}><X size={15}/></button></div>}
-    {modal && ['people','projects','tasks','suppliers'].includes(modal) && <SetupRecord kind={modal} data={data} close={() => setModal(null)} saved={async () => { await load(); setModal(null); setToast('Workspace updated. This is a local demo record.'); }}/>}
-    {modal === 'identity' && <Modal title="Your verified session" subtitle="Each person uses their own email and private code." onClose={()=>setModal(null)}><p>Signed in as <strong>{data.person.name}</strong> · {data.person.title}</p><p>Sign-in email: {data.person.email}</p><button className="secondary-btn" onClick={async()=>{await api('/session',{method:'DELETE'});activeRole.current=null;setData(null);setModal(null);go(pagePath('Overview'), true);}}>Sign out to use another account</button></Modal>}
+    {modal && ['people','projects','tasks','suppliers'].includes(modal) && <SetupRecord kind={modal} data={data} close={() => setModal(null)} saved={async () => { await load(); setModal(null); setToast('Workspace updated.'); }}/>}
+    {modal === 'identity' && <Modal title="Your verified session" subtitle="Sign out here to switch accounts." onClose={()=>setModal(null)}><p>Signed in as <strong>{data.person.name}</strong> · {data.person.title}</p><p>Sign-in email: {data.person.email}</p><button className="secondary-btn" onClick={async()=>{await api('/session',{method:'DELETE'});activeRole.current=null;setData(null);setModal(null);go(pagePath('Overview'), true);}}>Sign out to use another account</button></Modal>}
     {modal === 'new' && <NewRequest data={data} initial={draft} close={() => { setDraft(null); setModal(null); }} created={async id => { setModal(null); setSearch(''); setFilter('all'); await load(); showRequest(id); setToast('Request saved. We’re checking the details.'); }}/ >}
     {modal === 'help' && <Modal title="How spending works" onClose={() => setModal(null)}><div className="help-steps">{[['The owner sets the rules', 'Assign work, approve suppliers, and decide the spending limits.'], ['A teammate asks for a resource', 'Include the task, supplier, amount, purpose, and a quote link.'], ['The assistant gathers context', 'The assistant checks the request against the task, supplier and policy.'], ['A clear decision follows', 'Eligible purchases can proceed automatically within the rules. Uncertain requests wait for the owner.'], ['Every outcome leaves a record', 'The expense, decision, and receipt stay linked to the work.']].map(([t, p], i) => <div key={t}><span>{i + 1}</span><section><h3>{t}</h3><p>{p}</p></section></div>)}</div><div className="notice"><CircleAlert size={18}/><p>Payments require the owner to complete Stellar Testnet wallet, escrow, and Velo Gas setup in Connections. Purchasing instructions are operational rules, not a reviewed legal agreement.</p></div></Modal>}
   </div></>;
@@ -225,7 +295,6 @@ function SpendingMonitor({data,openEscrow}:{data:Data;openEscrow:()=>void}) {
   </section>;
 }
 
-function Brand() { return <div className="brand"><span className="brand-icon"><span/><span/><span/></span><strong>allowance<span>®</span></strong></div>; }
 function RequestTable({ data, requests, selected, onSelect }: { data: Data; requests: RequestItem[]; selected?: string; onSelect: (id: string) => void }) {
   return <div className="request-table"><div className="table-head"><span>Request / team member</span><span>Amount</span><span>Status</span><span/></div>{requests.length ? requests.map(r => <button key={r.id} className={`request-row ${selected === r.id ? 'selected' : ''}`} onClick={() => onSelect(r.id)}><span className="request-name"><span className={`request-icon ${r.category === 'Software' ? 'software' : ''}`}>{r.category === 'Software' ? <Command size={17}/> : r.category === 'Equipment' ? <CreditCard size={17}/> : <Layers3 size={17}/>}</span><span><strong>{r.title}</strong><small>{data.people.find(p => p.id === r.requesterId)?.name || 'Team member'}<span> / </span>{data.projects.find(p => p.id === r.projectId)?.name}</small></span></span><span className="table-amount">{amount(r.amount)}<small>XLM</small></span><Badge status={r.status} mode={r.mode}/><ChevronRight className="row-chevron" size={15}/></button>) : <div className="empty-state"><FileText size={30}/><h3>No matching requests</h3><p>Change the filters or submit a request from a team identity.</p></div>}</div>;
 }
